@@ -36,15 +36,14 @@ class MoonViewerApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    debugPrint('App: Building MoonViewerApp...');
     return MaterialApp(
       title: 'MoonViewer',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF6B4E3D),
-          brightness: Brightness.light,
-        ),
+        useMaterial3: false, // Disabled for stability
+        primaryColor: const Color(0xFF6B4E3D),
+        scaffoldBackgroundColor: const Color(0xFFF5F5F0),
       ),
       home: const LibraryScreen(),
     );

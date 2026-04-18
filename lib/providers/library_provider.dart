@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/book.dart';
 import '../services/storage_service.dart';
@@ -19,9 +20,16 @@ class LibraryNotifier extends StateNotifier<List<Book>> {
   }
 
   void _loadBooks() {
-    state = _storage.loadBooks();
-    // Sort by last read
-    state.sort((a, b) => b.lastRead.compareTo(a.lastRead));
+    try {
+      debugPrint('LibraryNotifier: Loading books...');
+      state = _storage.loadBooks();
+      debugPrint('LibraryNotifier: Loaded ${state.length} books.');
+      // Sort by last read
+      state.sort((a, b) => b.lastRead.compareTo(a.lastRead));
+    } catch (e, stack) {
+      debugPrint('LibraryNotifier: Error loading books: $e');
+      debugPrint('LibraryNotifier: StackTrace: $stack');
+    }
   }
 
   Future<void> addBook(Book book) async {

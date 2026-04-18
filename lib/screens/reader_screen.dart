@@ -2,7 +2,6 @@ import 'dart:io';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:charset_converter/charset_converter.dart';
 import '../models/book.dart';
@@ -163,7 +162,12 @@ class ReaderScreen extends HookConsumerWidget {
               Expanded(
                 child: Text(
                   book.title,
-                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                  style: const TextStyle(
+                    color: Colors.white, 
+                    fontWeight: FontWeight.bold,
+                    fontSize: 14,
+                    fontFamily: 'Georgia',
+                  ),
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
@@ -303,7 +307,12 @@ class ReaderScreen extends HookConsumerWidget {
               padding: const EdgeInsets.all(20),
               child: Text(
                 book.title,
-                style: GoogleFonts.lora(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
+                style: const TextStyle(
+                  color: Colors.white, 
+                  fontSize: 20, 
+                  fontWeight: FontWeight.bold,
+                  fontFamily: 'Georgia',
+                ),
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
               ),
@@ -403,8 +412,8 @@ class ReaderScreen extends HookConsumerWidget {
   }
 
   TextStyle _getStyle(ReaderSettings settings) {
-    return GoogleFonts.getFont(
-      settings.fontFamily,
+    return TextStyle(
+      fontFamily: settings.fontFamily == 'Lora' ? 'Georgia' : 'Times New Roman',
       fontSize: settings.fontSize,
       height: settings.lineSpacing,
     );

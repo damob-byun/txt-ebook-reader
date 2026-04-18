@@ -41,7 +41,8 @@ dependencies:
   riverpod_annotation: ^2.3.3
 
   # Networking & WebDAV
-  webdav_client: ^1.0.1
+  webdav_client: ^1.2.2
+  http: ^1.2.0
   crypto: ^3.0.3
 
   # Persistence & Files
@@ -50,7 +51,6 @@ dependencies:
   path: ^1.8.3
 
   # UI & Aesthetics
-  google_fonts: ^6.1.1
   intl: ^0.18.1
 
   # Encoding support
