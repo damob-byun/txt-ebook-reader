@@ -138,66 +138,23 @@ class LibraryScreen extends HookConsumerWidget {
               ),
             ],
 
-            // Main Bookshelf Grid
+            // Main Grid
             filteredBooks.isEmpty
                 ? SliverFillRemaining(
                     child: _buildEmptyState(context, isSearching.value),
                   )
                 : SliverPadding(
-                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-                    sliver: SliverList(
+                    padding: const EdgeInsets.all(20),
+                    sliver: SliverGrid(
+                      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: 3,
+                        childAspectRatio: 0.65,
+                        crossAxisSpacing: 20,
+                        mainAxisSpacing: 30,
+                      ),
                       delegate: SliverChildBuilderDelegate(
-                        (context, rowIndex) {
-                          final startIndex = rowIndex * 3;
-                          final rowItems = filteredBooks.skip(startIndex).take(3).toList();
-                          
-                          return Column(
-                            children: [
-                              Padding(
-                                padding: const EdgeInsets.symmetric(vertical: 20),
-                                child: Row(
-                                  mainAxisAlignment: MainAxisAlignment.spaceAround,
-                                  crossAxisAlignment: CrossAxisAlignment.end,
-                                  children: [
-                                    for (var i = 0; i < 3; i++)
-                                      Expanded(
-                                        child: Padding(
-                                          padding: const EdgeInsets.symmetric(horizontal: 10),
-                                          child: i < rowItems.length 
-                                              ? _BookItem(book: rowItems[i])
-                                              : const SizedBox.shrink(),
-                                        ),
-                                      ),
-                                  ],
-                                ),
-                              ),
-                              // The Wooden Shelf
-                              Container(
-                                height: 12,
-                                decoration: BoxDecoration(
-                                  gradient: LinearGradient(
-                                    begin: Alignment.topCenter,
-                                    end: Alignment.bottomCenter,
-                                    colors: [
-                                      Colors.brown[400]!,
-                                      Colors.brown[600]!,
-                                      Colors.brown[800]!,
-                                    ],
-                                  ),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: Colors.black.withOpacity(0.3),
-                                      blurRadius: 4,
-                                      offset: const Offset(0, 4),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              const SizedBox(height: 20),
-                            ],
-                          );
-                        },
-                        childCount: (filteredBooks.length / 3).ceil(),
+                        (context, index) => _BookItem(book: filteredBooks[index]),
+                        childCount: filteredBooks.length,
                       ),
                     ),
                   ),
@@ -241,7 +198,7 @@ class LibraryScreen extends HookConsumerWidget {
                 Text(
                   title,
                   style: GoogleFonts.notoSans(
-                    fontSize: 14, // Slightly smaller for better flow
+                    fontSize: 16,
                     fontWeight: FontWeight.bold,
                     color: Colors.white,
                   ),
@@ -249,14 +206,14 @@ class LibraryScreen extends HookConsumerWidget {
                 Text(
                   subtitle,
                   style: GoogleFonts.notoSans(
-                    fontSize: 11,
+                    fontSize: 12,
                     color: Colors.white70,
                   ),
                 ),
               ],
             ),
             const Spacer(),
-            const Icon(Icons.arrow_forward_ios, color: Colors.white70, size: 14),
+            const Icon(Icons.arrow_forward_ios, color: Colors.white70, size: 16),
           ],
         ),
       ),
@@ -318,40 +275,25 @@ class _BookItem extends ConsumerWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          AspectRatio(
-            aspectRatio: 0.7,
+          Expanded(
             child: Container(
               decoration: BoxDecoration(
                 color: Colors.white,
-                borderRadius: const BorderRadius.only(
-                  topRight: Radius.circular(4),
-                  bottomRight: Radius.circular(4),
-                ),
+                borderRadius: BorderRadius.circular(4),
                 boxShadow: [
                   BoxShadow(
-                    color: Colors.black.withOpacity(0.2),
-                    blurRadius: 6,
-                    offset: const Offset(4, 2),
+                    color: Colors.black.withOpacity(0.1),
+                    blurRadius: 8,
+                    offset: const Offset(4, 4),
                   ),
                 ],
+                border: Border.all(color: Colors.brown[100]!, width: 0.5),
               ),
               child: Stack(
                 children: [
-                  // Book Spine decoration
-                  Container(
-                    width: 8,
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        colors: [
-                          Colors.brown[800]!.withOpacity(0.5),
-                          Colors.brown[100]!.withOpacity(0.2),
-                        ],
-                      ),
-                    ),
-                  ),
-                  Center(
+                   Center(
                     child: Padding(
-                      padding: EdgeInsets.fromLTRB(isRecent ? 12 : 16, 8, 8, 8),
+                      padding: EdgeInsets.all(isRecent ? 8.0 : 12.0),
                       child: Text(
                         book.title,
                         textAlign: TextAlign.center,
@@ -365,32 +307,40 @@ class _BookItem extends ConsumerWidget {
                       ),
                     ),
                   ),
-                  // Progress Bar at the bottom of the book
+                  Positioned(
+                    bottom: 0,
+                    left: 0,
+                    right: 0,
+                    child: Container(
+                      height: 4,
+                      color: Colors.brown[100],
+                    ),
+                  ),
                   if (book.totalPages > 0)
                     Positioned(
-                      bottom: 4,
-                      left: 12,
-                      right: 12,
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(2),
-                        child: LinearProgressIndicator(
-                          value: (book.lastOffset + 1) / book.totalPages,
-                          backgroundColor: Colors.brown[50]!,
-                          valueColor: AlwaysStoppedAnimation<Color>(Colors.brown[400]!),
-                          minHeight: 3,
-                        ),
+                      bottom: 0,
+                      left: 0,
+                      child: LayoutBuilder(
+                        builder: (context, constraints) {
+                          final progress = (book.lastOffset + 1) / book.totalPages;
+                          return Container(
+                            height: 4,
+                            width: constraints.maxWidth * progress.clamp(0.0, 1.0),
+                            color: Colors.brown[400],
+                          );
+                        },
                       ),
                     ),
                 ],
               ),
             ),
           ),
-          const SizedBox(height: 6),
+          const SizedBox(height: 8),
           Text(
             book.title,
             style: GoogleFonts.notoSans(
               fontSize: isRecent ? 10 : 12,
-              fontWeight: FontWeight.w600,
+              fontWeight: FontWeight.w500,
               color: Colors.brown[900],
             ),
             maxLines: 1,
@@ -398,7 +348,7 @@ class _BookItem extends ConsumerWidget {
           ),
           if (isRecent && book.totalPages > 0)
              Text(
-              '${((book.lastOffset + 1) / book.totalPages * 100).toInt()}% 읽음',
+              '${((book.lastOffset + 1) / book.totalPages * 100).toInt()}%',
               style: GoogleFonts.notoSans(
                 fontSize: 9,
                 color: Colors.brown[400],

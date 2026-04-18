@@ -42,7 +42,6 @@ dependencies:
 
   # Networking & WebDAV
   webdav_client: ^1.0.1
-  http: ^1.2.0
   crypto: ^3.0.3
 
   # Persistence & Files

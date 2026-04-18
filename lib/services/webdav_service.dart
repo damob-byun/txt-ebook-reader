@@ -1,10 +1,8 @@
 import 'dart:io';
-import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:webdav_client/webdav_client.dart' as dav;
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
-import 'package:http/http.dart' as http;
 
 class WebDavService {
   late dav.Client _client;
@@ -35,45 +33,21 @@ class WebDavService {
     }
   }
 
-  Future<String?> downloadFileWithProgress(
-    String remotePath,
-    String fileName,
-    Function(double progress, int downloaded, int total) onProgress,
-  ) async {
+  Future<String?> downloadFile(String remotePath, String fileName) async {
     try {
       final dir = await getApplicationDocumentsDirectory();
       final localPath = p.join(dir.path, 'books', fileName);
       final localFile = File(localPath);
-
+      
       if (!await localFile.parent.exists()) {
         await localFile.parent.create(recursive: true);
       }
 
-      final url = Uri.parse('https://$host:$port$remotePath');
-      final request = http.Request('GET', url);
-      
-      // Basic Auth
-      final auth = 'Basic ${base64Encode(utf8.encode('$user:$pass'))}';
-      request.headers['Authorization'] = auth;
-
-      final response = await request.send();
-      final total = response.contentLength ?? 0;
-      int downloaded = 0;
-
-      final sink = localFile.openWrite();
-      
-      await response.stream.listen((chunk) {
-        downloaded += chunk.length;
-        sink.add(chunk);
-        if (total > 0) {
-          onProgress(downloaded / total, downloaded, total);
-        }
-      }).asFuture();
-
-      await sink.close();
+      final bytes = await _client.read(remotePath);
+      await localFile.writeAsBytes(bytes);
       return localPath;
     } catch (e) {
-      debugPrint('Download Progress Error: $e');
+      debugPrint('Download Error: $e');
       return null;
     }
   }
