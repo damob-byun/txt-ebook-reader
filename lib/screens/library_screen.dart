@@ -21,7 +21,7 @@ class LibraryScreen extends HookConsumerWidget {
         : books.where((b) => b.title.toLowerCase().contains(searchQuery.value.toLowerCase())).toList();
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F5ED),
+      backgroundColor: const Color(0xFFF5F5F0),
       appBar: AppBar(
         title: isSearching.value
             ? TextField(
@@ -174,21 +174,21 @@ class LibraryScreen extends HookConsumerWidget {
                               // The Wooden Shelf
                               Container(
                                 height: 12,
-                                decoration: const BoxDecoration(
+                                decoration: BoxDecoration(
                                   gradient: LinearGradient(
                                     begin: Alignment.topCenter,
                                     end: Alignment.bottomCenter,
                                     colors: [
-                                      Color(0xFF8D6E63), // brown[400]
-                                      Color(0xFF6D4C41), // brown[600]
-                                      Color(0xFF4E342E), // brown[800]
+                                      Colors.brown[400]!,
+                                      Colors.brown[600]!,
+                                      Colors.brown[800]!,
                                     ],
                                   ),
                                   boxShadow: [
                                     BoxShadow(
-                                      color: Color(0x4D000000), // black with 0.3 opacity
-                                      blurRadius: 2,
-                                      offset: Offset(0, 2),
+                                      color: Colors.black.withOpacity(0.3),
+                                      blurRadius: 4,
+                                      offset: const Offset(0, 4),
                                     ),
                                   ],
                                 ),
@@ -215,8 +215,6 @@ class LibraryScreen extends HookConsumerWidget {
     required Color color,
     required VoidCallback onTap,
   }) {
-    final shadowColor = Color.fromARGB(77, color.red, color.green, color.blue); // Approx 0.3 opacity
-
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(12),
@@ -227,9 +225,9 @@ class LibraryScreen extends HookConsumerWidget {
           borderRadius: BorderRadius.circular(12),
           boxShadow: [
             BoxShadow(
-              color: shadowColor,
-              blurRadius: 4,
-              offset: const Offset(0, 2),
+              color: color.withOpacity(0.3),
+              blurRadius: 8,
+              offset: const Offset(0, 4),
             ),
           ],
         ),
@@ -243,7 +241,7 @@ class LibraryScreen extends HookConsumerWidget {
                 Text(
                   title,
                   style: GoogleFonts.notoSans(
-                    fontSize: 14,
+                    fontSize: 14, // Slightly smaller for better flow
                     fontWeight: FontWeight.bold,
                     color: Colors.white,
                   ),
@@ -323,17 +321,17 @@ class _BookItem extends ConsumerWidget {
           AspectRatio(
             aspectRatio: 0.7,
             child: Container(
-              decoration: const BoxDecoration(
+              decoration: BoxDecoration(
                 color: Colors.white,
-                borderRadius: BorderRadius.only(
+                borderRadius: const BorderRadius.only(
                   topRight: Radius.circular(4),
                   bottomRight: Radius.circular(4),
                 ),
                 boxShadow: [
                   BoxShadow(
-                    color: Color(0x33000000), // black with 0.2 opacity
-                    blurRadius: 4,
-                    offset: Offset(2, 2),
+                    color: Colors.black.withOpacity(0.2),
+                    blurRadius: 6,
+                    offset: const Offset(4, 2),
                   ),
                 ],
               ),
@@ -342,11 +340,11 @@ class _BookItem extends ConsumerWidget {
                   // Book Spine decoration
                   Container(
                     width: 8,
-                    decoration: const BoxDecoration(
+                    decoration: BoxDecoration(
                       gradient: LinearGradient(
                         colors: [
-                          Color(0x804E342E), // brown[800] with 0.5 opacity
-                          Color(0x33EFEBE9), // brown[100] with 0.2 opacity
+                          Colors.brown[800]!.withOpacity(0.5),
+                          Colors.brown[100]!.withOpacity(0.2),
                         ],
                       ),
                     ),

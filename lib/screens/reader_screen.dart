@@ -2,8 +2,8 @@ import 'dart:io';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
-import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:charset_converter/charset_converter.dart';
 import '../models/book.dart';
 import '../models/reader_settings.dart';
@@ -20,18 +20,13 @@ class ReaderScreen extends HookConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final settings = ref.watch(readerSettingsProvider);
     final showOverlay = useState(false);
-    final bookText = useState<String>('');
+    final pages = useState<List<ReaderPage>>([]);
     final chapters = useState<List<ReaderChapter>>([]);
     final isLoading = useState(true);
-    
-    // Lazy Pagination State
-    final currentOffset = useState(book.lastOffset); // For lazy mode, this is a char offset, not page index
-    final pageCache = useState<Map<int, int>>({0: 0}); // Index -> StartOffset
-    final estimatedTotalPages = useState(100);
-    
-    final pageController = usePageController(initialPage: 0);
+    final pageController = usePageController(initialPage: book.lastOffset);
+    final currentPage = useState(book.lastOffset);
 
-    // Initial load
+    // Initial load and pagination
     useEffect(() {
       Future<void> loadBook() async {
         if (book.path == null) return;
@@ -42,6 +37,7 @@ class ReaderScreen extends HookConsumerWidget {
         String text;
 
         if (settings.encoding == 'auto') {
+          // Auto detection: try UTF-8 first, then CP949
           try {
             text = utf8.decode(bytes);
           } catch (_) {
@@ -59,29 +55,47 @@ class ReaderScreen extends HookConsumerWidget {
           }
         }
         
-        bookText.value = text;
-        chapters.value = ReaderEngine.detectChapters(text);
-        
-        // Estimate total pages (approx 800 chars per page)
-        estimatedTotalPages.value = (text.length / 800).ceil().clamp(1, 100000);
-        
-        // Find starting index for the saved offset
-        pageCache.value = {0: book.lastOffset};
-        currentOffset.value = book.lastOffset;
+        // Measure constraints for pagination
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          final size = MediaQuery.of(context).size;
+          final padding = MediaQuery.of(context).padding;
+          final availableWidth = size.width - (settings.horizontalPadding * 2);
+          final availableHeight = size.height - (settings.verticalPadding * 2) - padding.top - padding.bottom;
 
-        isLoading.value = false;
+          final paginatedPages = ReaderEngine.paginate(
+            text: text,
+            maxWidth: availableWidth,
+            maxHeight: availableHeight,
+            style: _getStyle(settings),
+          );
+
+          pages.value = paginatedPages;
+          chapters.value = ReaderEngine.detectChapters(text);
+          isLoading.value = false;
+          
+          // Update total pages in library
+          ref.read(libraryProvider.notifier).updateBook(
+                book.copyWith(totalPages: paginatedPages.length),
+              );
+
+          // Jump to last saved page if valid
+          if (book.lastOffset < paginatedPages.length) {
+            pageController.jumpToPage(book.lastOffset);
+            currentPage.value = book.lastOffset;
+          }
+        });
       }
 
       loadBook();
       return null;
-    }, [settings.encoding]);
+    }, [settings.fontSize, settings.fontFamily]);
 
     // Theme colors
     final colors = _getThemeColors(settings.theme);
 
     return Scaffold(
       backgroundColor: colors.background,
-      drawer: _buildDrawer(context, ref, bookText.value, chapters.value, pageController, showOverlay, pageCache, currentOffset),
+      drawer: _buildDrawer(context, ref, pages.value, chapters.value, pageController, showOverlay),
       body: Stack(
         children: [
           if (isLoading.value)
@@ -91,77 +105,34 @@ class ReaderScreen extends HookConsumerWidget {
               onTap: () => showOverlay.value = !showOverlay.value,
               child: PageView.builder(
                 controller: pageController,
-                itemCount: estimatedTotalPages.value,
+                itemCount: pages.value.length,
                 onPageChanged: (index) {
-                  final offset = pageCache.value[index] ?? currentOffset.value;
-                  currentOffset.value = offset;
-                  
-                  // Auto bookmark (Save offset)
+                  currentPage.value = index;
+                  // Auto bookmark
                   ref.read(libraryProvider.notifier).updateBook(
-                        book.copyWith(lastOffset: offset, lastRead: DateTime.now()),
+                        book.copyWith(lastOffset: index, lastRead: DateTime.now()),
                       );
                 },
                 itemBuilder: (context, index) {
-                  return LayoutBuilder(
-                    builder: (context, constraints) {
-                      final availableWidth = constraints.maxWidth - (settings.horizontalPadding * 2);
-                      final availableHeight = constraints.maxHeight - (settings.verticalPadding * 2) - MediaQuery.of(context).padding.top - MediaQuery.of(context).padding.bottom;
-                      
-                      // Get start offset for this index
-                      int startOffset = pageCache.value[index] ?? 0;
-                      
-                      // If we don't have it, and it's the next one, calculate it from the previous one
-                      if (!pageCache.value.containsKey(index) && pageCache.value.containsKey(index - 1)) {
-                        final prevOffset = pageCache.value[index - 1]!;
-                        // Calculate synchronously for smooth flow if possible
-                        final prevPage = ReaderEngine.findPageAtOffset(
-                          text: bookText.value,
-                          startOffset: prevOffset,
-                          maxWidth: availableWidth,
-                          maxHeight: availableHeight,
-                          style: _getStyle(settings),
-                        );
-                        startOffset = prevPage.endIndex;
-                        
-                        // Update cache safely in background
-                         Future.microtask(() {
-                           if (!pageCache.value.containsKey(index)) {
-                             final newCache = Map<int, int>.from(pageCache.value);
-                             newCache[index] = startOffset;
-                             pageCache.value = newCache;
-                           }
-                         });
-                      }
-
-                      final page = ReaderEngine.findPageAtOffset(
-                        text: bookText.value,
-                        startOffset: startOffset,
-                        maxWidth: availableWidth,
-                        maxHeight: availableHeight,
-                        style: _getStyle(settings),
-                      );
-
-                      return Padding(
-                        padding: EdgeInsets.symmetric(
-                          horizontal: settings.horizontalPadding,
-                          vertical: settings.verticalPadding,
-                        ),
-                        child: SafeArea(
-                          child: Text(
-                            page.content,
-                            style: _getStyle(settings).copyWith(color: colors.text),
-                            textAlign: TextAlign.justify,
-                          ),
-                        ),
-                      );
-                    },
+                  return Padding(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: settings.horizontalPadding,
+                      vertical: settings.verticalPadding,
+                    ),
+                    child: SafeArea(
+                      child: Text(
+                        pages.value[index].content,
+                        style: _getStyle(settings).copyWith(color: colors.text),
+                        textAlign: TextAlign.justify,
+                      ),
+                    ),
                   );
                 },
               ),
             ),
           
           // Overlay UI
-          if (showOverlay.value) _buildOverlay(context, ref, settings, colors, bookText.value.length, pageController, showOverlay, currentOffset, pageCache),
+          if (showOverlay.value) _buildOverlay(context, ref, settings, colors, pages.value.length, pageController, showOverlay, currentPage),
         ],
       ),
     );
@@ -172,19 +143,16 @@ class ReaderScreen extends HookConsumerWidget {
     WidgetRef ref, 
     ReaderSettings settings, 
     _ThemeColors colors,
-    int totalChars,
+    int totalPages,
     PageController pageController,
     ValueNotifier<bool> showOverlay,
-    ValueNotifier<int> currentOffset,
-    ValueNotifier<Map<int, int>> pageCache,
+    ValueNotifier<int> currentPage,
   ) {
-    final progress = totalChars > 0 ? currentOffset.value / totalChars : 0.0;
-    
     return Column(
       children: [
         // Top Bar
         Container(
-          color: const Color(0xCC000000),
+          color: Colors.black.withOpacity(0.8),
           padding: EdgeInsets.only(top: MediaQuery.of(context).padding.top, left: 16, right: 16, bottom: 8),
           child: Row(
             children: [
@@ -195,21 +163,21 @@ class ReaderScreen extends HookConsumerWidget {
               Expanded(
                 child: Text(
                   book.title,
-                  style: GoogleFonts.notoSans(color: Colors.white, fontWeight: FontWeight.bold),
+                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
               IconButton(
                 icon: Icon(
-                  book.bookmarks.contains(currentOffset.value) ? Icons.bookmark : Icons.bookmark_border,
+                  book.bookmarks.contains(currentPage.value) ? Icons.bookmark : Icons.bookmark_border,
                   color: Colors.white,
                 ),
                 onPressed: () {
                   final newBookmarks = List<int>.from(book.bookmarks);
-                  if (newBookmarks.contains(currentOffset.value)) {
-                    newBookmarks.remove(currentOffset.value);
+                  if (newBookmarks.contains(currentPage.value)) {
+                    newBookmarks.remove(currentPage.value);
                   } else {
-                    newBookmarks.add(currentOffset.value);
+                    newBookmarks.add(currentPage.value);
                   }
                   ref.read(libraryProvider.notifier).updateBook(book.copyWith(bookmarks: newBookmarks));
                 },
@@ -220,7 +188,7 @@ class ReaderScreen extends HookConsumerWidget {
         const Spacer(),
         // Bottom Bar
         Container(
-          color: const Color(0xCC000000), // black with 0.8 opacity
+          color: Colors.black.withOpacity(0.8),
           child: SafeArea(
             top: false,
             child: Padding(
@@ -228,22 +196,22 @@ class ReaderScreen extends HookConsumerWidget {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                   // Progress Slider (Based on Character Offset)
+                   // Progress Slider
                   Row(
                     children: [
-                      Text('${(progress * 100).toStringAsFixed(1)}%', style: const TextStyle(color: Colors.white, fontSize: 12)),
+                      Text('${currentPage.value + 1}', style: const TextStyle(color: Colors.white, fontSize: 12)),
                       Expanded(
                         child: Slider(
-                          value: progress.clamp(0.0, 1.0),
+                          value: currentPage.value.toDouble(),
+                          min: 0,
+                          max: (totalPages - 1).toDouble().clamp(0, double.infinity),
                           onChanged: (v) {
-                            final target = (v * totalChars).toInt();
-                            pageCache.value = {0: target};
-                            pageController.jumpToPage(0);
-                            currentOffset.value = target;
+                            pageController.jumpToPage(v.toInt());
+                            currentPage.value = v.toInt();
                           },
                         ),
                       ),
-                      Text('${(totalChars / 1024).toInt()}KB', style: const TextStyle(color: Colors.white, fontSize: 12)),
+                      Text('$totalPages', style: const TextStyle(color: Colors.white, fontSize: 12)),
                     ],
                   ),
                   const SizedBox(height: 10),
@@ -256,20 +224,55 @@ class ReaderScreen extends HookConsumerWidget {
                           value: settings.fontSize,
                           min: 12,
                           max: 40,
-                          onChanged: (v) {
-                             ref.read(readerSettingsProvider.notifier).updateFontSize(v);
-                             // Need to reset cache on font change as it affects pagination
-                             pageCache.value = {0: currentOffset.value};
-                             pageController.jumpToPage(0);
-                          },
+                          onChanged: (v) => ref.read(readerSettingsProvider.notifier).updateFontSize(v),
                         ),
                       ),
                       Text(settings.fontSize.toInt().toString(), style: const TextStyle(color: Colors.white)),
                     ],
                   ),
                   const SizedBox(height: 10),
-                  // Theme & Encoding selectors (already simplified)
-                  _buildEncodingAndThemeRows(ref, settings),
+                  // Encoding Selector
+                  Row(
+                    children: [
+                       const Text('인코딩: ', style: TextStyle(color: Colors.white, fontSize: 12)),
+                       const SizedBox(width: 8),
+                       Expanded(
+                         child: SingleChildScrollView(
+                           scrollDirection: Axis.horizontal,
+                           child: Row(
+                             children: [
+                               _buildEncodingChip(ref, settings, 'auto', '자동 감지'),
+                               _buildEncodingChip(ref, settings, 'utf-8', 'UTF-8'),
+                               _buildEncodingChip(ref, settings, 'cp949', 'CP949'),
+                             ],
+                           ),
+                         ),
+                       ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  // Theme Switcher
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceAround,
+                    children: ReaderTheme.values.map((t) {
+                      final themeColor = _getThemeColors(t);
+                      return GestureDetector(
+                        onTap: () => ref.read(readerSettingsProvider.notifier).updateTheme(t),
+                        child: Container(
+                          width: 40,
+                          height: 40,
+                          decoration: BoxDecoration(
+                            color: themeColor.background,
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: settings.theme == t ? Colors.blue : Colors.grey,
+                              width: settings.theme == t ? 3 : 1,
+                            ),
+                          ),
+                        ),
+                      );
+                    }).toList(),
+                  ),
                 ],
               ),
             ),
@@ -279,62 +282,13 @@ class ReaderScreen extends HookConsumerWidget {
     );
   }
 
-  Widget _buildEncodingAndThemeRows(WidgetRef ref, ReaderSettings settings) {
-     return Column(
-       children: [
-         Row(
-            children: [
-               const Text('인코딩: ', style: TextStyle(color: Colors.white, fontSize: 12)),
-               const SizedBox(width: 8),
-               Expanded(
-                 child: SingleChildScrollView(
-                   scrollDirection: Axis.horizontal,
-                   child: Row(
-                     children: [
-                       _buildEncodingChip(ref, settings, 'auto', '자동 감지'),
-                       _buildEncodingChip(ref, settings, 'utf-8', 'UTF-8'),
-                       _buildEncodingChip(ref, settings, 'cp949', 'CP949'),
-                     ],
-                   ),
-                 ),
-               ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceAround,
-            children: ReaderTheme.values.map((t) {
-              final themeColor = _getThemeColors(t);
-              return GestureDetector(
-                onTap: () => ref.read(readerSettingsProvider.notifier).updateTheme(t),
-                child: Container(
-                  width: 40,
-                  height: 40,
-                  decoration: BoxDecoration(
-                    color: themeColor.background,
-                    shape: BoxShape.circle,
-                    border: Border.all(
-                      color: settings.theme == t ? Colors.blue : Colors.grey,
-                      width: settings.theme == t ? 3 : 1,
-                    ),
-                  ),
-                ),
-              );
-            }).toList(),
-          ),
-       ],
-     );
-  }
-
   Widget _buildDrawer(
     BuildContext context, 
     WidgetRef ref, 
-    String text, 
+    List<ReaderPage> pages, 
     List<ReaderChapter> chapters, 
     PageController pageController,
     ValueNotifier<bool> showOverlay,
-    ValueNotifier<Map<int, int>> pageCache,
-    ValueNotifier<int> currentOffset,
   ) {
     return DefaultTabController(
       length: 2,
@@ -373,9 +327,8 @@ class ReaderScreen extends HookConsumerWidget {
                       return ListTile(
                         title: Text(chapter.title, style: const TextStyle(fontSize: 14)),
                         onTap: () {
-                          pageCache.value = {0: chapter.offset};
-                          pageController.jumpToPage(0);
-                          currentOffset.value = chapter.offset;
+                          final pageIdx = _getPageForOffset(pages, chapter.offset);
+                          pageController.jumpToPage(pageIdx);
                           Navigator.pop(context);
                           showOverlay.value = false;
                         },
@@ -386,15 +339,13 @@ class ReaderScreen extends HookConsumerWidget {
                   ListView.builder(
                     itemCount: book.bookmarks.length,
                     itemBuilder: (context, index) {
-                      final bOffset = book.bookmarks[index];
+                      final bPageIdx = book.bookmarks[index];
                       return ListTile(
                         leading: const Icon(Icons.bookmark, color: Color(0xFF6B4E3D)),
-                        title: Text('위치: ${(bOffset / text.length * 100).toStringAsFixed(1)}%'),
-                        subtitle: Text(text.substring(bOffset, (bOffset + 40).clamp(0, text.length)).replaceAll('\n', ' ')),
+                        title: Text('페이지 ${bPageIdx + 1}'),
+                        subtitle: Text('${pages[bPageIdx].content.substring(0, 30).replaceAll('\n', ' ')}...'),
                         onTap: () {
-                          pageCache.value = {0: bOffset};
-                          pageController.jumpToPage(0);
-                          currentOffset.value = bOffset;
+                          pageController.jumpToPage(bPageIdx);
                           Navigator.pop(context);
                           showOverlay.value = false;
                         },
@@ -417,6 +368,15 @@ class ReaderScreen extends HookConsumerWidget {
         ),
       ),
     );
+  }
+
+  int _getPageForOffset(List<ReaderPage> pages, int offset) {
+    for (int i = 0; i < pages.length; i++) {
+      if (offset >= pages[i].startIndex && offset < pages[i].endIndex) {
+        return i;
+      }
+    }
+    return 0;
   }
 
   Widget _buildEncodingChip(WidgetRef ref, ReaderSettings settings, String value, String label) {

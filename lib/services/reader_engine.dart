@@ -37,32 +37,42 @@ class ReaderEngine {
     return chapters;
   }
 
-  static ReaderPage findPageAtOffset({
+  static List<ReaderPage> paginate({
     required String text,
-    required int startOffset,
     required double maxWidth,
     required double maxHeight,
     required TextStyle style,
+    double lineSpacing = 1.5,
   }) {
+    final List<ReaderPage> pages = [];
     final textPainter = TextPainter(
       textDirection: TextDirection.ltr,
       textAlign: TextAlign.justify,
     );
 
-    int end = _findPageEnd(
-      text,
-      startOffset,
-      maxWidth,
-      maxHeight,
-      style,
-      textPainter,
-    );
+    int start = 0;
+    while (start < text.length) {
+      int end = _findPageEnd(
+        text,
+        start,
+        maxWidth,
+        maxHeight,
+        style,
+        textPainter,
+      );
+      
+      if (end <= start) break; // Should not happen
 
-    return ReaderPage(
-      startIndex: startOffset,
-      endIndex: end,
-      content: text.substring(startOffset, end),
-    );
+      pages.add(ReaderPage(
+        startIndex: start,
+        endIndex: end,
+        content: text.substring(start, end).trim(),
+      ));
+      
+      start = end;
+    }
+
+    return pages;
   }
 
   static int _findPageEnd(
@@ -73,28 +83,18 @@ class ReaderEngine {
     TextStyle style,
     TextPainter painter,
   ) {
-    if (start >= text.length) return text.length;
-
-    // Fast path: if the remaining text is small, just take it all
-    if (text.length - start < 500) {
-      painter.text = TextSpan(text: text.substring(start), style: style);
-      painter.layout(maxWidth: maxWidth);
-      if (painter.height <= maxHeight) return text.length;
-    }
-
-    // Binary search for the page end
+    // Binary search or incremental search for the best fit
+    // For simplicity, we'll use a chunked approach or a simple loop for now.
+    // However, binary search on the string length is more efficient.
+    
     int low = start;
-    int high = (start + 3000).clamp(start, text.length); // Assume max 3k chars per page for speed
+    int high = text.length;
     int bestEnd = start;
 
     while (low <= high) {
       int mid = (low + high) ~/ 2;
-      if (mid <= start) {
-        low = mid + 1;
-        continue;
-      }
-      
       String sub = text.substring(start, mid);
+      
       painter.text = TextSpan(text: sub, style: style);
       painter.layout(maxWidth: maxWidth);
 
@@ -106,14 +106,12 @@ class ReaderEngine {
       }
     }
 
-    // Alignment logic (breaking at newlines or spaces)
+    // Try to break at a newline or space if possible for better reading
     if (bestEnd < text.length) {
-      // Find the last newline in the last part of the page
       int lastNewline = text.lastIndexOf('\n', bestEnd);
-      if (lastNewline > start && lastNewline > bestEnd - 150) {
+      if (lastNewline > start && lastNewline > bestEnd - 100) {
         return lastNewline + 1;
       }
-      // Or last space
       int lastSpace = text.lastIndexOf(' ', bestEnd);
       if (lastSpace > start && lastSpace > bestEnd - 50) {
         return lastSpace + 1;
