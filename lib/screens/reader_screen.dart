@@ -173,6 +173,12 @@ class ReaderScreen extends HookConsumerWidget {
       ],
     );
 
+    final safePages = allPages.value;
+    final curIdx = pageIdx.value.clamp(
+      0,
+      safePages.isEmpty ? 0 : safePages.length - 1,
+    );
+
     // -----------------------------------------------------------------------
     // Volume Buttons Listener
     // -----------------------------------------------------------------------
@@ -333,11 +339,6 @@ class ReaderScreen extends HookConsumerWidget {
     // -----------------------------------------------------------------------
     // UI
     // -----------------------------------------------------------------------
-    final safePages = allPages.value;
-    final curIdx = pageIdx.value.clamp(
-      0,
-      safePages.isEmpty ? 0 : safePages.length - 1,
-    );
     final progress = totalBytes.value > 0 ? (sliderVal.value * 100).round() : 0;
 
     final isBookmarked =

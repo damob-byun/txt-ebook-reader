@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:webdav_client/webdav_client.dart' as dav;
+import '../services/webdav_service.dart';
+import '../models/book.dart';
+import '../providers/library_provider.dart';
 import '../providers/webdav_account_provider.dart';
 
 final webDavServiceProvider = Provider<WebDavService?>((ref) {
@@ -202,6 +205,13 @@ class _WebDavBrowserScreenState extends ConsumerState<WebDavBrowserScreen> {
     );
 
     final service = ref.read(webDavServiceProvider);
+    if (service == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('WebDAV 계정 설정이 필요합니다.')),
+      );
+      return;
+    }
+    
     final localPath = await service.downloadFileWithProgress(
       file.path!, 
       file.name!,
