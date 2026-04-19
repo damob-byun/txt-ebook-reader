@@ -7,6 +7,8 @@ import '../models/reader_settings.dart';
 import '../providers/reader_settings_provider.dart';
 import '../providers/library_provider.dart';
 import '../services/reader_engine.dart';
+import '../providers/app_settings_provider.dart';
+import 'package:volume_key_board/volume_key_board.dart';
 
 // ---------------------------------------------------------------------------
 // Theme helpers
@@ -47,98 +49,157 @@ class ReaderScreen extends HookConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final settings = ref.watch(readerSettingsProvider);
-    final mq       = MediaQuery.of(context);
+    final appSettings = ref.watch(appSettingsProvider);
+    final mq = MediaQuery.of(context);
+    final scaffoldKey = useMemoized(() => GlobalKey<ScaffoldState>());
 
     // Always use the latest book state from library for bookmarks
-    final library   = ref.watch(libraryProvider);
-    final latestBook = library.firstWhere((b) => b.id == book.id, orElse: () => book);
+    final library = ref.watch(libraryProvider);
+    final latestBook = library.firstWhere(
+      (b) => b.id == book.id,
+      orElse: () => book,
+    );
 
-    final isLoading     = useState(true);
+    final isLoading = useState(true);
     final isLoadingMore = useState(false);
-    final allPages      = useState<List<ReaderPage>>([]);
-    final totalBytes    = useState(0);
-    final loadedEnd     = useState(0);
-    final pageCtrl      = usePageController();
-    final pageIdx       = useState(0);
-    final showOverlay   = useState(false);
-    final sliderVal     = useState(0.0);
+    final allPages = useState<List<ReaderPage>>([]);
+    final totalBytes = useState(0);
+    final loadedEnd = useState(0);
+    final pageCtrl = usePageController();
+    final pageIdx = useState(0);
+    final showOverlay = useState(false);
+    final sliderVal = useState(0.0);
 
     // Tracks current reading byte without triggering re-renders
     final readByte = useRef(book.lastOffset);
 
     final colors = _tc(settings.theme);
-    final style  = _ts(settings);
+    final style = _ts(settings);
 
     final pageW = max(100.0, mq.size.width - settings.horizontalPadding * 2);
-    final pageH = max(100.0, mq.size.height - mq.padding.top - mq.padding.bottom - settings.verticalPadding * 2);
+    final pageH = max(
+      100.0,
+      mq.size.height -
+          mq.padding.top -
+          mq.padding.bottom -
+          settings.verticalPadding * 2,
+    );
 
     // -----------------------------------------------------------------------
     // Load / reload (runs when font or encoding settings change)
     // -----------------------------------------------------------------------
-    useEffect(() {
-      final targetByte = readByte.value;
+    useEffect(
+      () {
+        final targetByte = readByte.value;
 
-      Future<void> load() async {
-        if (book.path == null || book.path!.isEmpty) {
-          isLoading.value = false;
-          return;
-        }
-        isLoading.value = true;
-        try {
-          final fileSz = await ReaderEngine.fileSize(book.path!);
-          totalBytes.value = fileSz;
+        Future<void> load() async {
+          if (book.path == null || book.path!.isEmpty) {
+            isLoading.value = false;
+            return;
+          }
+          isLoading.value = true;
+          try {
+            final fileSz = await ReaderEngine.fileSize(book.path!);
+            totalBytes.value = fileSz;
 
-          final chunkStart = fileSz > 0
-              ? (targetByte ~/ ReaderEngine.chunkBytes) * ReaderEngine.chunkBytes
-              : 0;
+            final chunkStart = fileSz > 0
+                ? (targetByte ~/ ReaderEngine.chunkBytes) *
+                      ReaderEngine.chunkBytes
+                : 0;
 
-          final (text, consumed) = await ReaderEngine.readChunk(
-            book.path!, chunkStart, settings.encoding,
-          );
+            final (text, consumed) = await ReaderEngine.readChunk(
+              book.path!,
+              chunkStart,
+              settings.encoding,
+            );
 
-          if (!context.mounted) return;
-          if (text.isEmpty) { isLoading.value = false; return; }
+            if (!context.mounted) return;
+            if (text.isEmpty) {
+              isLoading.value = false;
+              return;
+            }
 
-          final pages = ReaderEngine.paginate(
-            text: text, maxWidth: pageW, maxHeight: pageH,
-            style: style,
-            byteStart: chunkStart, byteEnd: chunkStart + consumed,
-          );
+            final pages = ReaderEngine.paginate(
+              text: text,
+              maxWidth: pageW,
+              maxHeight: pageH,
+              style: style,
+              byteStart: chunkStart,
+              byteEnd: chunkStart + consumed,
+            );
 
-          allPages.value  = pages;
-          loadedEnd.value = chunkStart + consumed;
+            allPages.value = pages;
+            loadedEnd.value = chunkStart + consumed;
 
-          int savedIdx = 0;
-          if (pages.isNotEmpty) {
-            for (int i = 0; i < pages.length; i++) {
-              if (pages[i].byteStart <= targetByte) {
-                savedIdx = i;
-              } else {
-                break;
+            int savedIdx = 0;
+            if (pages.isNotEmpty) {
+              for (int i = 0; i < pages.length; i++) {
+                if (pages[i].byteStart <= targetByte) {
+                  savedIdx = i;
+                } else {
+                  break;
+                }
               }
             }
-          }
 
-          if (fileSz > 0 && pages.isNotEmpty) {
-            sliderVal.value = pages[savedIdx].byteStart / fileSz;
-          }
-
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (pageCtrl.hasClients && savedIdx < pages.length) {
-              pageCtrl.jumpToPage(savedIdx);
-              pageIdx.value = savedIdx;
+            if (fileSz > 0 && pages.isNotEmpty) {
+              sliderVal.value = pages[savedIdx].byteStart / fileSz;
             }
-          });
-        } catch (e) {
-          debugPrint('ReaderScreen: load error: $e');
-        } finally {
-          if (context.mounted) isLoading.value = false;
-        }
-      }
 
-      load();
-      return null;
-    }, [settings.fontSize, settings.fontFamily, settings.lineSpacing, settings.encoding, pageW, pageH]);
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (pageCtrl.hasClients && savedIdx < pages.length) {
+                pageCtrl.jumpToPage(savedIdx);
+                pageIdx.value = savedIdx;
+              }
+            });
+          } catch (e) {
+            debugPrint('ReaderScreen: load error: $e');
+          } finally {
+            if (context.mounted) isLoading.value = false;
+          }
+        }
+
+        load();
+        return null;
+      },
+      [
+        settings.fontSize,
+        settings.fontFamily,
+        settings.lineSpacing,
+        settings.encoding,
+        pageW,
+        pageH,
+        appSettings.useScrollMode, // Re-paginate if scroll mode changes layout needs
+      ],
+    );
+
+    // -----------------------------------------------------------------------
+    // Volume Buttons Listener
+    // -----------------------------------------------------------------------
+    useEffect(() {
+      if (!appSettings.useVolumeKeys) return null;
+
+      final subscription = VolumeKeyBoard.instance.addListener((event) {
+        if (event == VolumeKey.up) {
+          if (curIdx > 0) {
+            if (appSettings.useScrollMode) {
+              // Custom logic for scroll mode if needed, or just jump
+              pageCtrl.animateToPage(curIdx - 1, duration: const Duration(milliseconds: 250), curve: Curves.easeOut);
+            } else {
+              pageCtrl.previousPage(duration: const Duration(milliseconds: 250), curve: Curves.easeOut);
+            }
+          }
+        } else if (event == VolumeKey.down) {
+          if (appSettings.useScrollMode) {
+             pageCtrl.animateToPage(curIdx + 1, duration: const Duration(milliseconds: 250), curve: Curves.easeOut);
+          } else {
+            pageCtrl.nextPage(duration: const Duration(milliseconds: 250), curve: Curves.easeOut);
+          }
+        }
+      });
+
+      return () => VolumeKeyBoard.instance.removeListener();
+    }, [appSettings.useVolumeKeys, curIdx, safePages.length]);
 
     // -----------------------------------------------------------------------
     // Load next chunk
@@ -152,7 +213,9 @@ class ReaderScreen extends HookConsumerWidget {
       final startByte = loadedEnd.value;
 
       final (text, consumed) = await ReaderEngine.readChunk(
-        book.path!, startByte, settings.encoding,
+        book.path!,
+        startByte,
+        settings.encoding,
       );
 
       if (!context.mounted || text.isEmpty) {
@@ -161,12 +224,15 @@ class ReaderScreen extends HookConsumerWidget {
       }
 
       final newPages = ReaderEngine.paginate(
-        text: text, maxWidth: pageW, maxHeight: pageH,
+        text: text,
+        maxWidth: pageW,
+        maxHeight: pageH,
         style: style,
-        byteStart: startByte, byteEnd: startByte + consumed,
+        byteStart: startByte,
+        byteEnd: startByte + consumed,
       );
 
-      allPages.value  = [...allPages.value, ...newPages];
+      allPages.value = [...allPages.value, ...newPages];
       loadedEnd.value = startByte + consumed;
       isLoadingMore.value = false;
     }
@@ -183,7 +249,8 @@ class ReaderScreen extends HookConsumerWidget {
           pageCtrl.jumpToPage(i);
           pageIdx.value = i;
           readByte.value = targetByte;
-          if (totalBytes.value > 0) sliderVal.value = targetByte / totalBytes.value;
+          if (totalBytes.value > 0)
+            sliderVal.value = targetByte / totalBytes.value;
           return;
         }
       }
@@ -192,7 +259,9 @@ class ReaderScreen extends HookConsumerWidget {
       final chunkStart =
           (targetByte ~/ ReaderEngine.chunkBytes) * ReaderEngine.chunkBytes;
       final (text, consumed) = await ReaderEngine.readChunk(
-        book.path!, chunkStart, settings.encoding,
+        book.path!,
+        chunkStart,
+        settings.encoding,
       );
 
       if (!context.mounted || text.isEmpty) {
@@ -201,19 +270,25 @@ class ReaderScreen extends HookConsumerWidget {
       }
 
       final newPages = ReaderEngine.paginate(
-        text: text, maxWidth: pageW, maxHeight: pageH,
+        text: text,
+        maxWidth: pageW,
+        maxHeight: pageH,
         style: style,
-        byteStart: chunkStart, byteEnd: chunkStart + consumed,
+        byteStart: chunkStart,
+        byteEnd: chunkStart + consumed,
       );
 
-      allPages.value  = newPages;
+      allPages.value = newPages;
       loadedEnd.value = chunkStart + consumed;
-      readByte.value  = targetByte;
+      readByte.value = targetByte;
 
       int jumpIdx = 0;
       for (int i = 0; i < newPages.length; i++) {
-        if (newPages[i].byteStart <= targetByte) { jumpIdx = i; }
-        else { break; }
+        if (newPages[i].byteStart <= targetByte) {
+          jumpIdx = i;
+        } else {
+          break;
+        }
       }
 
       isLoading.value = false;
@@ -235,17 +310,22 @@ class ReaderScreen extends HookConsumerWidget {
 
       final page = pages[i];
       readByte.value = page.byteStart;
-      if (totalBytes.value > 0) sliderVal.value = page.byteStart / totalBytes.value;
+      if (totalBytes.value > 0)
+        sliderVal.value = page.byteStart / totalBytes.value;
 
       final estimated = loadedEnd.value > 0 && pages.isNotEmpty
           ? (totalBytes.value * pages.length ~/ loadedEnd.value)
           : 0;
 
-      ref.read(libraryProvider.notifier).updateBook(latestBook.copyWith(
-        lastOffset: page.byteStart,
-        lastRead: DateTime.now(),
-        totalPages: estimated,
-      ));
+      ref
+          .read(libraryProvider.notifier)
+          .updateBook(
+            latestBook.copyWith(
+              lastOffset: page.byteStart,
+              lastRead: DateTime.now(),
+              totalPages: estimated,
+            ),
+          );
 
       if (i >= pages.length - 5) loadNext();
     }
@@ -254,13 +334,19 @@ class ReaderScreen extends HookConsumerWidget {
     // UI
     // -----------------------------------------------------------------------
     final safePages = allPages.value;
-    final curIdx    = pageIdx.value.clamp(0, safePages.isEmpty ? 0 : safePages.length - 1);
-    final progress  = totalBytes.value > 0 ? (sliderVal.value * 100).round() : 0;
+    final curIdx = pageIdx.value.clamp(
+      0,
+      safePages.isEmpty ? 0 : safePages.length - 1,
+    );
+    final progress = totalBytes.value > 0 ? (sliderVal.value * 100).round() : 0;
 
-    final isBookmarked = safePages.isNotEmpty && curIdx < safePages.length &&
+    final isBookmarked =
+        safePages.isNotEmpty &&
+        curIdx < safePages.length &&
         latestBook.bookmarks.contains(safePages[curIdx].byteStart);
 
     return Scaffold(
+      key: scaffoldKey,
       backgroundColor: colors.bg,
       drawer: _BookmarkDrawer(
         bookId: book.id,
@@ -275,59 +361,82 @@ class ReaderScreen extends HookConsumerWidget {
           // ---- Reader content ----
           SafeArea(
             child: isLoading.value
-                ? Center(child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: colors.text.withOpacity(0.4),
-                  ))
+                ? Center(
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: colors.text.withOpacity(0.4),
+                    ),
+                  )
                 : safePages.isEmpty
-                    ? Center(child: Text('텍스트를 읽을 수 없습니다.',
-                        style: TextStyle(color: colors.text)))
-                    : GestureDetector(
-                        onTapUp: (d) {
-                          final w = mq.size.width;
-                          final x = d.globalPosition.dx;
-                          if (x < w * 0.25) {
-                            if (curIdx > 0) {
-                              pageCtrl.previousPage(
-                                duration: const Duration(milliseconds: 250),
-                                curve: Curves.easeOut,
-                              );
-                            }
-                          } else if (x > w * 0.75) {
-                            pageCtrl.nextPage(
-                              duration: const Duration(milliseconds: 250),
-                              curve: Curves.easeOut,
-                            );
-                          } else {
-                            showOverlay.value = !showOverlay.value;
-                          }
-                        },
-                        child: PageView.builder(
-                          controller: pageCtrl,
-                          physics: const BouncingScrollPhysics(),
-                          itemCount: safePages.length + (isLoadingMore.value ? 1 : 0),
-                          onPageChanged: onPageChanged,
-                          itemBuilder: (ctx, i) {
-                            if (i >= safePages.length) {
-                              return Center(child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: colors.text.withOpacity(0.3),
-                              ));
-                            }
-                            return Padding(
-                              padding: EdgeInsets.symmetric(
-                                horizontal: settings.horizontalPadding,
-                                vertical: settings.verticalPadding,
-                              ),
-                              child: Text(
-                                safePages[i].content,
-                                style: style.copyWith(color: colors.text),
-                                textAlign: TextAlign.justify,
-                              ),
-                            );
-                          },
-                        ),
-                      ),
+                ? Center(
+                    child: Text(
+                      '텍스트를 읽을 수 없습니다.',
+                      style: TextStyle(color: colors.text),
+                    ),
+                  )
+                : GestureDetector(
+                    onTapUp: (d) {
+                      if (!appSettings.useTouchTurn) {
+                        // Only allow center tap for overlay
+                        showOverlay.value = !showOverlay.value;
+                        return;
+                      }
+                      final w = mq.size.width;
+                      final x = d.globalPosition.dx;
+                      if (x < w * 0.25) {
+                        if (curIdx > 0) {
+                          pageCtrl.previousPage(
+                            duration: const Duration(milliseconds: 250),
+                            curve: Curves.easeOut,
+                          );
+                        }
+                      } else if (x > w * 0.75) {
+                        pageCtrl.nextPage(
+                          duration: const Duration(milliseconds: 250),
+                          curve: Curves.easeOut,
+                        );
+                      } else {
+                        showOverlay.value = !showOverlay.value;
+                      }
+                    },
+                    child: PageView.builder(
+                      controller: pageCtrl,
+                      scrollDirection: appSettings.useScrollMode ? Axis.vertical : Axis.horizontal,
+                      physics: const BouncingScrollPhysics(),
+                      itemCount:
+                          safePages.length + (isLoadingMore.value ? 1 : 0),
+                      onPageChanged: onPageChanged,
+                      itemBuilder: (ctx, i) {
+                        if (i >= safePages.length) {
+                          return Center(
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: colors.text.withOpacity(0.3),
+                            ),
+                          );
+                        }
+                        return Padding(
+                          padding: EdgeInsets.symmetric(
+                            horizontal: settings.horizontalPadding,
+                            vertical: settings.verticalPadding,
+                          ),
+                          child: Text(
+                            safePages[i].content,
+                            style: style.copyWith(color: colors.text),
+                            textAlign: TextAlign.justify,
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+          ),
+
+          // ---- Bottom Footer (Progress & Time) ----
+          Positioned(
+            bottom: mq.padding.bottom + 5,
+            left: 0,
+            right: 0,
+            child: _ReaderFooter(progress: progress, colors: colors),
           ),
 
           // ---- Overlay ----
@@ -354,6 +463,9 @@ class ReaderScreen extends HookConsumerWidget {
                   builder: (_) => const _SettingsSheet(),
                 );
               },
+              onOpenDrawer: () {
+                scaffoldKey.currentState?.openDrawer();
+              },
             ),
         ],
       ),
@@ -374,8 +486,9 @@ class ReaderScreen extends HookConsumerWidget {
     required bool isBookmarked,
     required PageController pageCtrl,
     required VoidCallback onSettings,
+    required VoidCallback onOpenDrawer,
   }) {
-    final mq      = MediaQuery.of(context);
+    final mq = MediaQuery.of(context);
     final curPage = safePages[curIdx];
 
     return Column(
@@ -385,7 +498,9 @@ class ReaderScreen extends HookConsumerWidget {
           color: colors.bar,
           padding: EdgeInsets.only(
             top: mq.padding.top + 2,
-            left: 4, right: 4, bottom: 4,
+            left: 4,
+            right: 4,
+            bottom: 4,
           ),
           child: Row(
             children: [
@@ -399,7 +514,7 @@ class ReaderScreen extends HookConsumerWidget {
                 color: Colors.white,
                 onPressed: () {
                   showOverlay.value = false;
-                  Scaffold.of(context).openDrawer();
+                  onOpenDrawer();
                 },
               ),
               Expanded(
@@ -427,7 +542,8 @@ class ReaderScreen extends HookConsumerWidget {
                   } else {
                     bm.add(curPage.byteStart);
                   }
-                  ref.read(libraryProvider.notifier)
+                  ref
+                      .read(libraryProvider.notifier)
                       .updateBook(latestBook.copyWith(bookmarks: bm));
                 },
               ),
@@ -447,7 +563,9 @@ class ReaderScreen extends HookConsumerWidget {
         Container(
           color: colors.bar,
           padding: EdgeInsets.only(
-            left: 20, right: 20, top: 10,
+            left: 20,
+            right: 20,
+            top: 10,
             bottom: mq.padding.bottom + 12,
           ),
           child: Column(
@@ -455,8 +573,12 @@ class ReaderScreen extends HookConsumerWidget {
             children: [
               SliderTheme(
                 data: SliderThemeData(
-                  thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
-                  overlayShape: const RoundSliderOverlayShape(overlayRadius: 12),
+                  thumbShape: const RoundSliderThumbShape(
+                    enabledThumbRadius: 6,
+                  ),
+                  overlayShape: const RoundSliderOverlayShape(
+                    overlayRadius: 12,
+                  ),
                   trackHeight: 3,
                   activeTrackColor: Colors.white70,
                   inactiveTrackColor: Colors.white24,
@@ -471,8 +593,11 @@ class ReaderScreen extends HookConsumerWidget {
                     final targetByte = (v * totalBytes).round();
                     int closest = 0;
                     for (int i = 0; i < safePages.length; i++) {
-                      if (safePages[i].byteStart <= targetByte) { closest = i; }
-                      else { break; }
+                      if (safePages[i].byteStart <= targetByte) {
+                        closest = i;
+                      } else {
+                        break;
+                      }
                     }
                     pageCtrl.jumpToPage(closest);
                   },
@@ -509,7 +634,8 @@ class _BookmarkDrawer extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final library = ref.watch(libraryProvider);
     final bookIdx = library.indexWhere((b) => b.id == bookId);
-    if (bookIdx < 0) return const Drawer(child: Center(child: CircularProgressIndicator()));
+    if (bookIdx < 0)
+      return const Drawer(child: Center(child: CircularProgressIndicator()));
     final book = library[bookIdx];
     final bm = book.bookmarks;
 
@@ -543,10 +669,16 @@ class _BookmarkDrawer extends ConsumerWidget {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(Icons.bookmark_border, size: 48, color: Colors.brown[200]),
+                    Icon(
+                      Icons.bookmark_border,
+                      size: 48,
+                      color: Colors.brown[200],
+                    ),
                     const SizedBox(height: 12),
-                    const Text('북마크가 없습니다.',
-                        style: TextStyle(color: Colors.brown)),
+                    const Text(
+                      '북마크가 없습니다.',
+                      style: TextStyle(color: Colors.brown),
+                    ),
                   ],
                 ),
               ),
@@ -559,17 +691,23 @@ class _BookmarkDrawer extends ConsumerWidget {
                     const Divider(height: 1, indent: 16, endIndent: 16),
                 itemBuilder: (ctx, i) {
                   final offset = bm[i];
-                  final pct    = totalBytes > 0 ? (offset * 100 ~/ totalBytes) : 0;
+                  final pct = totalBytes > 0 ? (offset * 100 ~/ totalBytes) : 0;
                   return ListTile(
-                    leading: const Icon(Icons.bookmark, color: Color(0xFF6B4E3D)),
-                    title: Text('$pct% 위치',
-                        style: const TextStyle(fontWeight: FontWeight.w500)),
+                    leading: const Icon(
+                      Icons.bookmark,
+                      color: Color(0xFF6B4E3D),
+                    ),
+                    title: Text(
+                      '$pct% 위치',
+                      style: const TextStyle(fontWeight: FontWeight.w500),
+                    ),
                     trailing: IconButton(
                       icon: const Icon(Icons.delete_outline, size: 18),
                       color: Colors.red[300],
                       onPressed: () {
                         final updated = List<int>.from(bm)..remove(offset);
-                        ref.read(libraryProvider.notifier)
+                        ref
+                            .read(libraryProvider.notifier)
                             .updateBook(book.copyWith(bookmarks: updated));
                       },
                     ),
@@ -600,13 +738,13 @@ class _SettingsSheet extends ConsumerWidget {
 
     final themeData = [
       (ReaderTheme.classic, const Color(0xFFF8F7F2), '클래식'),
-      (ReaderTheme.sepia,   const Color(0xFFF4ECD8), '세피아'),
-      (ReaderTheme.soft,    const Color(0xFFEEF3E8), '녹색'),
-      (ReaderTheme.night,   const Color(0xFF1A1A1A), '야간'),
+      (ReaderTheme.sepia, const Color(0xFFF4ECD8), '세피아'),
+      (ReaderTheme.soft, const Color(0xFFEEF3E8), '녹색'),
+      (ReaderTheme.night, const Color(0xFF1A1A1A), '야간'),
     ];
-    const encodings  = ['auto', 'UTF-8', 'EUC-KR'];
-    const encLabels  = ['자동',  'UTF-8', 'EUC-KR'];
-    const fonts      = ['Georgia', 'system'];
+    const encodings = ['auto', 'UTF-8', 'EUC-KR'];
+    const encLabels = ['자동', 'UTF-8', 'EUC-KR'];
+    const fonts = ['Georgia', 'system'];
     const fontLabels = ['Georgia', '기본 폰트'];
 
     return Container(
@@ -616,14 +754,17 @@ class _SettingsSheet extends ConsumerWidget {
       ),
       padding: EdgeInsets.only(
         bottom: mq.viewInsets.bottom + mq.padding.bottom + 20,
-        top: 12, left: 24, right: 24,
+        top: 12,
+        left: 24,
+        right: 24,
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           // Handle
           Container(
-            width: 40, height: 4,
+            width: 40,
+            height: 4,
             margin: const EdgeInsets.only(bottom: 20),
             decoration: BoxDecoration(
               color: colors.text.withOpacity(0.3),
@@ -637,16 +778,27 @@ class _SettingsSheet extends ConsumerWidget {
             colors: colors,
             child: Row(
               children: [
-                _IconBtn(icon: Icons.remove, colors: colors,
-                    onTap: () => n.updateFontSize(s.fontSize - 1)),
+                _IconBtn(
+                  icon: Icons.remove,
+                  colors: colors,
+                  onTap: () => n.updateFontSize(s.fontSize - 1),
+                ),
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 14),
-                  child: Text('${s.fontSize.round()}',
-                      style: TextStyle(color: colors.text,
-                          fontWeight: FontWeight.bold, fontSize: 16)),
+                  child: Text(
+                    '${s.fontSize.round()}',
+                    style: TextStyle(
+                      color: colors.text,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16,
+                    ),
+                  ),
                 ),
-                _IconBtn(icon: Icons.add, colors: colors,
-                    onTap: () => n.updateFontSize(s.fontSize + 1)),
+                _IconBtn(
+                  icon: Icons.add,
+                  colors: colors,
+                  onTap: () => n.updateFontSize(s.fontSize + 1),
+                ),
               ],
             ),
           ),
@@ -659,14 +811,19 @@ class _SettingsSheet extends ConsumerWidget {
             colors: colors,
             child: Row(
               children: [
-                Text(s.lineSpacing.toStringAsFixed(1),
-                    style: TextStyle(
-                        color: colors.text.withOpacity(0.7), fontSize: 12)),
+                Text(
+                  s.lineSpacing.toStringAsFixed(1),
+                  style: TextStyle(
+                    color: colors.text.withOpacity(0.7),
+                    fontSize: 12,
+                  ),
+                ),
                 Expanded(
                   child: SliderTheme(
                     data: SliderThemeData(
-                      thumbShape:
-                          const RoundSliderThumbShape(enabledThumbRadius: 6),
+                      thumbShape: const RoundSliderThumbShape(
+                        enabledThumbRadius: 6,
+                      ),
                       trackHeight: 3,
                       activeTrackColor: colors.text.withOpacity(0.6),
                       inactiveTrackColor: colors.text.withOpacity(0.2),
@@ -674,7 +831,9 @@ class _SettingsSheet extends ConsumerWidget {
                     ),
                     child: Slider(
                       value: s.lineSpacing,
-                      min: 1.0, max: 3.0, divisions: 20,
+                      min: 1.0,
+                      max: 3.0,
+                      divisions: 20,
                       onChanged: (v) => n.updateLineSpacing(v),
                     ),
                   ),
@@ -690,15 +849,18 @@ class _SettingsSheet extends ConsumerWidget {
             label: '글꼴',
             colors: colors,
             child: Row(
-              children: List.generate(fonts.length, (i) => Padding(
-                padding: const EdgeInsets.only(right: 8),
-                child: _Chip(
-                  label: fontLabels[i],
-                  selected: s.fontFamily == fonts[i],
-                  colors: colors,
-                  onTap: () => n.updateFontFamily(fonts[i]),
+              children: List.generate(
+                fonts.length,
+                (i) => Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: _Chip(
+                    label: fontLabels[i],
+                    selected: s.fontFamily == fonts[i],
+                    colors: colors,
+                    onTap: () => n.updateFontFamily(fonts[i]),
+                  ),
                 ),
-              )),
+              ),
             ),
           ),
 
@@ -709,15 +871,18 @@ class _SettingsSheet extends ConsumerWidget {
             label: '인코딩',
             colors: colors,
             child: Row(
-              children: List.generate(encodings.length, (i) => Padding(
-                padding: const EdgeInsets.only(right: 8),
-                child: _Chip(
-                  label: encLabels[i],
-                  selected: s.encoding == encodings[i],
-                  colors: colors,
-                  onTap: () => n.updateEncoding(encodings[i]),
+              children: List.generate(
+                encodings.length,
+                (i) => Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: _Chip(
+                    label: encLabels[i],
+                    selected: s.encoding == encodings[i],
+                    colors: colors,
+                    onTap: () => n.updateEncoding(encodings[i]),
+                  ),
                 ),
-              )),
+              ),
             ),
           ),
 
@@ -726,36 +891,45 @@ class _SettingsSheet extends ConsumerWidget {
           // Themes
           Row(
             children: [
-              Text('테마',
-                  style: TextStyle(
-                      color: colors.text, fontWeight: FontWeight.w600)),
+              Text(
+                '테마',
+                style: TextStyle(
+                  color: colors.text,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
               const SizedBox(width: 20),
-              ...themeData.map((td) => GestureDetector(
-                onTap: () => n.updateTheme(td.$1),
-                child: Tooltip(
-                  message: td.$3,
-                  child: Container(
-                    width: 32, height: 32,
-                    margin: const EdgeInsets.only(right: 12),
-                    decoration: BoxDecoration(
-                      color: td.$2,
-                      shape: BoxShape.circle,
-                      border: Border.all(
-                        color: s.theme == td.$1
-                            ? Colors.blue
-                            : colors.text.withOpacity(0.3),
-                        width: s.theme == td.$1 ? 2.5 : 1,
+              ...themeData.map(
+                (td) => GestureDetector(
+                  onTap: () => n.updateTheme(td.$1),
+                  child: Tooltip(
+                    message: td.$3,
+                    child: Container(
+                      width: 32,
+                      height: 32,
+                      margin: const EdgeInsets.only(right: 12),
+                      decoration: BoxDecoration(
+                        color: td.$2,
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: s.theme == td.$1
+                              ? Colors.blue
+                              : colors.text.withOpacity(0.3),
+                          width: s.theme == td.$1 ? 2.5 : 1,
+                        ),
+                        boxShadow: s.theme == td.$1
+                            ? [
+                                BoxShadow(
+                                  color: Colors.blue.withOpacity(0.3),
+                                  blurRadius: 4,
+                                ),
+                              ]
+                            : null,
                       ),
-                      boxShadow: s.theme == td.$1
-                          ? [BoxShadow(
-                              color: Colors.blue.withOpacity(0.3),
-                              blurRadius: 4,
-                            )]
-                          : null,
                     ),
                   ),
                 ),
-              )),
+              ),
             ],
           ),
         ],
@@ -767,6 +941,51 @@ class _SettingsSheet extends ConsumerWidget {
 // ---------------------------------------------------------------------------
 // Small UI helpers
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Reader Footer (Status Bar)
+// ---------------------------------------------------------------------------
+
+class _ReaderFooter extends HookWidget {
+  final int progress;
+  final _TC colors;
+
+  const _ReaderFooter({required this.progress, required this.colors});
+
+  @override
+  Widget build(BuildContext context) {
+    final timeStr = useState(_formatTime());
+
+    useEffect(() {
+      final timer = Stream.periodic(const Duration(seconds: 10)).listen((_) {
+        timeStr.value = _formatTime();
+      });
+      return timer.cancel;
+    }, []);
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+      child: Center(
+        child: Text(
+          '$progress%  ·  ${timeStr.value}',
+          style: TextStyle(
+            fontSize: 10,
+            color: colors.text.withOpacity(0.4),
+            fontWeight: FontWeight.w400,
+            letterSpacing: 0.5,
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _formatTime() {
+    final now = DateTime.now();
+    final hour = now.hour.toString().padLeft(2, '0');
+    final minute = now.minute.toString().padLeft(2, '0');
+    return '$hour:$minute';
+  }
+}
 
 class _Row extends StatelessWidget {
   final String label;
@@ -780,9 +999,10 @@ class _Row extends StatelessWidget {
       children: [
         SizedBox(
           width: 70,
-          child: Text(label,
-              style: TextStyle(
-                  color: colors.text, fontWeight: FontWeight.w600)),
+          child: Text(
+            label,
+            style: TextStyle(color: colors.text, fontWeight: FontWeight.w600),
+          ),
         ),
         Expanded(child: child),
       ],
@@ -794,14 +1014,19 @@ class _IconBtn extends StatelessWidget {
   final IconData icon;
   final _TC colors;
   final VoidCallback onTap;
-  const _IconBtn({required this.icon, required this.colors, required this.onTap});
+  const _IconBtn({
+    required this.icon,
+    required this.colors,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        width: 36, height: 36,
+        width: 36,
+        height: 36,
         decoration: BoxDecoration(
           border: Border.all(color: colors.text.withOpacity(0.3)),
           borderRadius: BorderRadius.circular(8),
@@ -818,8 +1043,10 @@ class _Chip extends StatelessWidget {
   final _TC colors;
   final VoidCallback onTap;
   const _Chip({
-    required this.label, required this.selected,
-    required this.colors, required this.onTap,
+    required this.label,
+    required this.selected,
+    required this.colors,
+    required this.onTap,
   });
 
   @override
@@ -838,7 +1065,8 @@ class _Chip extends StatelessWidget {
         child: Text(
           label,
           style: TextStyle(
-            color: colors.text, fontSize: 12,
+            color: colors.text,
+            fontSize: 12,
             fontWeight: selected ? FontWeight.bold : FontWeight.normal,
           ),
         ),

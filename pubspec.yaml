@@ -55,6 +55,14 @@ dependencies:
 
   # Encoding support
   charset_converter: ^2.3.0
+  cp949_codec: ^1.0.2
+
+  # File Picker
+  file_picker: ^6.1.1
+  
+  # External Input & Hardware
+  volume_key_board: ^0.0.2
+  flutter_secure_storage: ^9.0.0
 
 dev_dependencies:
   flutter_test:

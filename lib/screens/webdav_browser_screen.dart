@@ -1,11 +1,20 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:webdav_client/webdav_client.dart' as dav;
-import '../services/webdav_service.dart';
-import '../models/book.dart';
-import '../providers/library_provider.dart';
+import '../providers/webdav_account_provider.dart';
 
-final webDavServiceProvider = Provider((ref) => WebDavService());
+final webDavServiceProvider = Provider<WebDavService?>((ref) {
+  final account = ref.watch(webDavAccountProvider);
+  if (account == null || !account.isValid) return null;
+  
+  return WebDavService(
+    host: account.host,
+    port: account.port,
+    user: account.username,
+    pass: account.password,
+    useHttps: account.useHttps,
+  );
+});
 
 class WebDavBrowserScreen extends ConsumerStatefulWidget {
   const WebDavBrowserScreen({super.key});
@@ -35,6 +44,13 @@ class _WebDavBrowserScreenState extends ConsumerState<WebDavBrowserScreen> {
     
     try {
       final service = ref.read(webDavServiceProvider);
+      if (service == null) {
+        setState(() {
+          _isLoading = false;
+          _errorMessage = "WebDAV 설정 정보가 없습니다.";
+        });
+        return;
+      }
       final files = await service.listTxtFiles(_currentPath);
       
       if (!mounted) return;

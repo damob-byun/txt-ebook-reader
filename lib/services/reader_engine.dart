@@ -1,8 +1,10 @@
 import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:charset_converter/charset_converter.dart';
+import 'package:cp949_codec/cp949_codec.dart';
 
 class ReaderPage {
   final int byteStart;
@@ -55,30 +57,80 @@ class ReaderEngine {
     if (bytes.isEmpty) return '';
     
     final enc = encoding.toLowerCase();
-    if (enc == 'auto') {
+    
+    // Auto-detection or explicit UTF-8
+    if (enc == 'auto' || enc == 'utf-8' || enc == 'utf8') {
       try {
-        final r = await CharsetConverter.decode('UTF-8', bytes);
-        if (!r.contains('\uFFFD')) return r;
+        // Native Dart UTF-8 decoding is robust and cross-platform
+        return utf8.decode(bytes, allowMalformed: true);
       } catch (e) {
-        debugPrint('ReaderEngine: UTF-8 decode failed: $e');
+        if (enc != 'auto') {
+          debugPrint('ReaderEngine: UTF-8 decode failed: $e');
+        }
+        // If not auto, fallback to a safe string. If auto, continue to EUC-KR.
+        if (enc != 'auto') return String.fromCharCodes(bytes.where((b) => b < 128));
       }
+    }
+
+    // EUC-KR / CP949
+    if (enc == 'auto' || enc == 'euc-kr' || enc == 'cp949') {
       try {
-        return await CharsetConverter.decode('EUC-KR', bytes);
+        // Try cp949_codec first (pure Dart, works on macOS)
+        return cp949.decode(bytes);
       } catch (e) {
-        debugPrint('ReaderEngine: EUC-KR decode failed: $e');
+        debugPrint('ReaderEngine: cp949_codec failed: $e. trying lenient decode...');
+        try {
+          return _lenientCP949(bytes);
+        } catch (e2) {
+          debugPrint('ReaderEngine: Lenient CP949 failed: $e2. trying charset_converter...');
+          try {
+            // Fallback to platform-native if available
+            return await CharsetConverter.decode('EUC-KR', bytes);
+          } catch (e3) {
+            debugPrint('ReaderEngine: EUC-KR decode failed: $e3');
+          }
+        }
       }
-      return String.fromCharCodes(bytes.where((b) => b < 128));
     }
     
+    // Other specific encodings
     try {
-      final targetEnc = enc == 'utf-8' || enc == 'utf8' ? 'UTF-8' : 
-                      (enc == 'euc-kr' || enc == 'cp949') ? 'EUC-KR' : encoding;
-      return await CharsetConverter.decode(targetEnc, bytes);
+      return await CharsetConverter.decode(encoding, bytes);
     } catch (e) {
       debugPrint('ReaderEngine: Specific decode ($encoding) failed: $e');
-      try {
-        return await CharsetConverter.decode('UTF-8', bytes);
-      } catch (_) {}
+      return String.fromCharCodes(bytes.where((b) => b < 128));
+    }
+  }
+
+  /// Manually decode CP949 while skipping invalid bytes that cause FormatException
+  static String _lenientCP949(Uint8List bytes) {
+    try {
+      final List<int> sanitized = [];
+      int i = 0;
+      while (i < bytes.length) {
+        final b1 = bytes[i];
+        if (b1 <= 0x7F) {
+          sanitized.add(b1);
+          i++;
+        } else if (b1 >= 0x81 && b1 <= 0xFE && i + 1 < bytes.length) {
+          final b2 = bytes[i + 1];
+          // Valid CP949 trail byte ranges
+          if ((b2 >= 0x41 && b2 <= 0x5A) || (b2 >= 0x61 && b2 <= 0x7A) || (b2 >= 0x81 && b2 <= 0xFE)) {
+            sanitized.add(b1);
+            sanitized.add(b2);
+            i += 2;
+          } else {
+            // Invalid trail byte, skip lead byte
+            i++;
+          }
+        } else {
+          // Invalid lead byte (like 0x80 or 0xFF) or hanging lead byte, skip
+          i++;
+        }
+      }
+      return cp949.decode(Uint8List.fromList(sanitized));
+    } catch (e) {
+      // Last resort: just filter ASCII
       return String.fromCharCodes(bytes.where((b) => b < 128));
     }
   }

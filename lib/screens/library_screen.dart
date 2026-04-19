@@ -1,9 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:file_picker/file_picker.dart';
 import '../providers/library_provider.dart';
+import '../providers/webdav_account_provider.dart';
 import '../models/book.dart';
 import 'reader_screen.dart';
 import 'webdav_browser_screen.dart';
+import 'webdav_login_screen.dart';
+import 'settings_screen.dart';
+import 'dart:io';
+import 'package:path/path.dart' as p;
 
 class LibraryScreen extends ConsumerStatefulWidget {
   const LibraryScreen({super.key});
@@ -21,6 +27,62 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
   void dispose() {
     _searchController.dispose();
     super.dispose();
+  }
+
+  void _showCloudSelection(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) => Container(
+        padding: const EdgeInsets.symmetric(vertical: 20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+              child: Text(
+                '클라우드 서비스 선택',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+            ),
+            ListTile(
+              leading: const Icon(Icons.dns_outlined, color: Colors.blue),
+              title: const Text('WebDAV'),
+              subtitle: const Text('개인 NAS 또는 서버 연결'),
+              onTap: () {
+                Navigator.pop(context);
+                final account = ref.read(webDavAccountProvider);
+                if (account == null || !account.isValid) {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const WebDavLoginScreen()),
+                  );
+                } else {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const WebDavBrowserScreen()),
+                  );
+                }
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.add_to_drive, color: Colors.green),
+              title: const Text('Google Drive'),
+              subtitle: const Text('준비 중입니다'),
+              enabled: false,
+            ),
+            ListTile(
+              leading: const Icon(Icons.cloud_outlined, color: Colors.blueAccent),
+              title: const Text('Dropbox'),
+              subtitle: const Text('준비 중입니다'),
+              enabled: false,
+            ),
+            const SizedBox(height: 10),
+          ],
+        ),
+      ),
+    );
   }
 
   @override
@@ -46,6 +108,14 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
             : const Text('MoonViewer'),
         actions: [
           IconButton(
+            icon: const Icon(Icons.settings_outlined),
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const SettingsScreen()),
+              );
+            },
+          ),
+          IconButton(
             icon: Icon(_isSearching ? Icons.close : Icons.search),
             onPressed: () {
               setState(() {
@@ -59,11 +129,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
           ),
           IconButton(
             icon: const Icon(Icons.cloud_download_outlined),
-            onPressed: () {
-              Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const WebDavBrowserScreen()),
-              );
-            },
+            onPressed: () => _showCloudSelection(context),
           ),
         ],
       ),
@@ -75,7 +141,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
                 if (!_isSearching) ...[
                   _buildSectionTitle('최근 읽은 책'),
                   _buildRecentList(books.take(5).toList()),
-                  _buildExploreCard(context),
+                  _buildFilePickerCard(context),
                   _buildSectionTitle('전체 책장'),
                 ],
                 Padding(
@@ -135,41 +201,37 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
     );
   }
 
-  Widget _buildExploreCard(BuildContext context) {
+  Widget _buildFilePickerCard(BuildContext context) {
     return Container(
       margin: const EdgeInsets.fromLTRB(20, 10, 20, 15),
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         gradient: const LinearGradient(
-          colors: [Color(0xFF6B4E3D), Color(0xFF8D6E63)],
+          colors: [Color(0xFF4A6572), Color(0xFF344955)],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
         borderRadius: BorderRadius.circular(15),
         boxShadow: [
           BoxShadow(
-            color: Colors.brown.withOpacity(0.2),
+            color: Colors.blueGrey.withOpacity(0.2),
             blurRadius: 8,
             offset: const Offset(0, 4),
           ),
         ],
       ),
       child: InkWell(
-        onTap: () {
-          Navigator.of(context).push(
-            MaterialPageRoute(builder: (_) => const WebDavBrowserScreen()),
-          );
-        },
-        child: Row(
+        onTap: () => _pickLocalFile(context),
+        child: const Row(
           children: [
-            const Icon(Icons.explore_outlined, size: 36, color: Colors.white70),
-            const SizedBox(width: 15),
-            const Expanded(
+            Icon(Icons.folder_open_outlined, size: 36, color: Colors.white70),
+            SizedBox(width: 15),
+            Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'WebDAV 탐색하기',
+                    '기기에서 탐색하기',
                     style: TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.bold,
@@ -177,17 +239,53 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
                     ),
                   ),
                   Text(
-                    '클라우드에서 책 가져오기',
+                    '내 기기의 .txt 파일 가져오기',
                     style: TextStyle(fontSize: 11, color: Colors.white70),
                   ),
                 ],
               ),
             ),
-            const Icon(Icons.arrow_forward_ios, size: 16, color: Colors.white70),
+            Icon(Icons.add_circle_outline, size: 24, color: Colors.white70),
           ],
         ),
       ),
     );
+  }
+
+  Future<void> _pickLocalFile(BuildContext context) async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['txt'],
+      );
+
+      if (result != null && result.files.single.path != null) {
+        final path = result.files.single.path!;
+        final name = result.files.single.name;
+        
+        // Add to library
+        final book = Book(
+          id: DateTime.now().millisecondsSinceEpoch.toString(),
+          title: p.basenameWithoutExtension(name),
+          path: path,
+          lastRead: DateTime.now(),
+        );
+        
+        await ref.read(libraryProvider.notifier).addBook(book);
+        
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('"${book.title}"이(가) 책장에 추가되었습니다.')),
+          );
+        }
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('파일을 가져오는 중 오류가 발생했습니다: $e')),
+        );
+      }
+    }
   }
 
   Widget _buildEmptyState(BuildContext context) {
@@ -203,16 +301,24 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
           ),
           const SizedBox(height: 15),
           ElevatedButton.icon(
+            onPressed: () => _pickLocalFile(context),
+            icon: const Icon(Icons.folder_open),
+            label: const Text('기기에서 탐색하기'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF4A6572),
+              foregroundColor: Colors.white,
+            ),
+          ),
+          TextButton.icon(
             onPressed: () {
               Navigator.of(context).push(
                 MaterialPageRoute(builder: (_) => const WebDavBrowserScreen()),
               );
             },
-            icon: const Icon(Icons.cloud_download),
+            icon: const Icon(Icons.cloud_download, size: 16),
             label: const Text('WebDAV 가기'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF6B4E3D),
-              foregroundColor: Colors.white,
+            style: TextButton.styleFrom(
+              foregroundColor: Colors.brown,
             ),
           ),
         ],

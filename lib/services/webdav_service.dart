@@ -8,15 +8,22 @@ import 'package:http/http.dart' as http;
 
 class WebDavService {
   late dav.Client _client;
-  final String host = 'bjs-nas.synology.me';
-  //final String host = '192.168.50.139';
-  final int port = 5006;
-  final String user = 'bjs';
-  final String pass = 'wltjrdms!2';
+  final String host;
+  final int port;
+  final String user;
+  final String pass;
+  final bool useHttps;
 
-  WebDavService() {
+  WebDavService({
+    required this.host,
+    required this.port,
+    required this.user,
+    required this.pass,
+    this.useHttps = true,
+  }) {
+    final protocol = useHttps ? 'https' : 'http';
     _client = dav.newClient(
-      'https://$host:$port',
+      '$protocol://$host:$port',
       user: user,
       password: pass,
       debug: true,
