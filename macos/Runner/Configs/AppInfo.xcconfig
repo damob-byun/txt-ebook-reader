@@ -8,7 +8,7 @@
 PRODUCT_NAME = textviewer
 
 // The application's bundle identifier
-PRODUCT_BUNDLE_IDENTIFIER = com.example.textviewer
+PRODUCT_BUNDLE_IDENTIFIER = com.forpro.textviewer
 
 // The copyright displayed in application information
 PRODUCT_COPYRIGHT = Copyright © 2026 com.example. All rights reserved.

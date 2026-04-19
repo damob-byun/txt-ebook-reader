@@ -26,8 +26,6 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
   @override
   Widget build(BuildContext context) {
     final books = ref.watch(libraryProvider);
-    final recentBooks = books.take(5).toList();
-
     final filteredBooks = _searchQuery.isEmpty
         ? books
         : books.where((b) => b.title.toLowerCase().contains(_searchQuery.toLowerCase())).toList();
@@ -45,15 +43,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
                 ),
                 onChanged: (v) => setState(() => _searchQuery = v),
               )
-            : const Text(
-                'MoonViewer',
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontFamily: 'Georgia', // Premium system serif
-                ),
-              ),
-        backgroundColor: Colors.transparent,
-        elevation: 0,
+            : const Text('MoonViewer'),
         actions: [
           IconButton(
             icon: Icon(_isSearching ? Icons.close : Icons.search),
@@ -77,71 +67,58 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
           ),
         ],
       ),
-      body: SafeArea(
-        child: books.isEmpty
-            ? _buildEmptyState(context)
-            : CustomScrollView(
-                slivers: [
-                  if (!_isSearching && recentBooks.isNotEmpty) ...[
-                    _buildSliverTitle('최근 읽은 책'),
-                    SliverToBoxAdapter(
-                      child: _buildRecentList(recentBooks),
-                    ),
-                  ],
-                  if (!_isSearching) ...[
-                    SliverToBoxAdapter(
-                      child: _buildExploreCard(context),
-                    ),
-                    _buildSliverTitle('전체 책장'),
-                  ],
-                  if (filteredBooks.isEmpty && _isSearching)
-                    SliverFillRemaining(
-                      child: _buildNoResultsState(),
-                    )
-                  else
-                    SliverPadding(
-                      padding: const EdgeInsets.symmetric(horizontal: 20),
-                      sliver: SliverGrid(
-                        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: 3,
-                          childAspectRatio: 0.6,
-                          crossAxisSpacing: 15,
-                          mainAxisSpacing: 20,
-                        ),
-                        delegate: SliverChildBuilderDelegate(
-                          (context, index) {
-                            return _BookItem(book: filteredBooks[index]);
-                          },
-                          childCount: filteredBooks.length,
-                        ),
-                      ),
-                    ),
-                  const SliverToBoxAdapter(child: SizedBox(height: 30)),
+      body: books.isEmpty 
+          ? _buildEmptyState(context) 
+          : ListView(
+              padding: EdgeInsets.zero,
+              children: [
+                if (!_isSearching) ...[
+                  _buildSectionTitle('최근 읽은 책'),
+                  _buildRecentList(books.take(5).toList()),
+                  _buildExploreCard(context),
+                  _buildSectionTitle('전체 책장'),
                 ],
-              ),
-      ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                  child: GridView.builder(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: 3,
+                      childAspectRatio: 0.65,
+                      crossAxisSpacing: 15,
+                      mainAxisSpacing: 20,
+                    ),
+                    itemCount: filteredBooks.length,
+                    itemBuilder: (context, index) {
+                      return _BookItem(book: filteredBooks[index]);
+                    },
+                  ),
+                ),
+                const SizedBox(height: 50),
+              ],
+            ),
     );
   }
 
-  Widget _buildSliverTitle(String title) {
-    return SliverToBoxAdapter(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(20, 20, 20, 10),
-        child: Text(
-          title,
-          style: TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.bold,
-            color: Colors.brown[800],
-          ),
+  Widget _buildSectionTitle(String title) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 10),
+      child: Text(
+        title,
+        style: TextStyle(
+          fontSize: 16,
+          fontWeight: FontWeight.bold,
+          color: Colors.brown[800],
         ),
       ),
     );
   }
 
   Widget _buildRecentList(List<Book> books) {
+    if (books.isEmpty) return const SizedBox.shrink();
     return SizedBox(
-      height: 180,
+      height: 160,
       child: ListView.builder(
         padding: const EdgeInsets.symmetric(horizontal: 15),
         scrollDirection: Axis.horizontal,
@@ -149,7 +126,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
         itemBuilder: (context, index) {
           final book = books[index];
           return Container(
-            width: 110,
+            width: 100,
             margin: const EdgeInsets.symmetric(horizontal: 5),
             child: _BookItem(book: book, isSmall: true),
           );
@@ -160,7 +137,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
 
   Widget _buildExploreCard(BuildContext context) {
     return Container(
-      margin: const EdgeInsets.all(20),
+      margin: const EdgeInsets.fromLTRB(20, 10, 20, 15),
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         gradient: const LinearGradient(
@@ -171,44 +148,44 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
         borderRadius: BorderRadius.circular(15),
         boxShadow: [
           BoxShadow(
-            color: Colors.brown.withOpacity(0.3),
-            blurRadius: 10,
-            offset: const Offset(0, 5),
+            color: Colors.brown.withOpacity(0.2),
+            blurRadius: 8,
+            offset: const Offset(0, 4),
           ),
         ],
       ),
-      child: Row(
-        children: [
-          const Icon(Icons.explore_outlined, size: 40, color: Colors.white70),
-          const SizedBox(width: 15),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'WebDAV 탐색하기',
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.white,
+      child: InkWell(
+        onTap: () {
+          Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => const WebDavBrowserScreen()),
+          );
+        },
+        child: Row(
+          children: [
+            const Icon(Icons.explore_outlined, size: 36, color: Colors.white70),
+            const SizedBox(width: 15),
+            const Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'WebDAV 탐색하기',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
                   ),
-                ),
-                const Text(
-                  '클라우드에서 새로운 책을 가져오세요',
-                  style: TextStyle(fontSize: 12, color: Colors.white70),
-                ),
-              ],
+                  Text(
+                    '클라우드에서 책 가져오기',
+                    style: TextStyle(fontSize: 11, color: Colors.white70),
+                  ),
+                ],
+              ),
             ),
-          ),
-          IconButton(
-            icon: const Icon(Icons.arrow_forward_ios, color: Colors.white),
-            onPressed: () {
-              Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const WebDavBrowserScreen()),
-              );
-            },
-          ),
-        ],
+            const Icon(Icons.arrow_forward_ios, size: 16, color: Colors.white70),
+          ],
+        ),
       ),
     );
   }
@@ -218,13 +195,13 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.library_books_outlined, size: 80, color: Colors.brown[200]),
+          Icon(Icons.library_books_outlined, size: 60, color: Colors.brown[200]),
           const SizedBox(height: 20),
-          Text(
+          const Text(
             '책장이 비어있습니다.',
-            style: TextStyle(fontSize: 18, color: Colors.brown[400]),
+            style: TextStyle(fontSize: 16, color: Colors.brown),
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 15),
           ElevatedButton.icon(
             onPressed: () {
               Navigator.of(context).push(
@@ -232,7 +209,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
               );
             },
             icon: const Icon(Icons.cloud_download),
-            label: const Text('WebDAV에서 가져오기'),
+            label: const Text('WebDAV 가기'),
             style: ElevatedButton.styleFrom(
               backgroundColor: const Color(0xFF6B4E3D),
               foregroundColor: Colors.white,
@@ -250,9 +227,9 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
         children: [
           Icon(Icons.search_off, size: 60, color: Colors.brown[200]),
           const SizedBox(height: 15),
-          Text(
+          const Text(
             '검색 결과가 없습니다.',
-            style: TextStyle(color: Colors.brown[400]),
+            style: TextStyle(color: Colors.brown),
           ),
         ],
       ),
@@ -289,9 +266,9 @@ class _BookItem extends ConsumerWidget {
                 borderRadius: BorderRadius.circular(8),
                 boxShadow: [
                   BoxShadow(
-                    color: Colors.black.withOpacity(0.1),
-                    blurRadius: 5,
-                    offset: const Offset(2, 2),
+                    color: Colors.black.withOpacity(0.05),
+                    blurRadius: 4,
+                    offset: const Offset(1, 1),
                   ),
                 ],
                 border: Border.all(color: Colors.brown[100]!, width: 0.5),
@@ -300,14 +277,15 @@ class _BookItem extends ConsumerWidget {
                 children: [
                   Center(
                     child: Padding(
-                      padding: const EdgeInsets.all(8.0),
+                      padding: const EdgeInsets.all(6.0),
                       child: Text(
                         book.title,
                         textAlign: TextAlign.center,
                         style: TextStyle(
-                          fontSize: isSmall ? 10 : 11,
+                          fontSize: isSmall ? 9 : 10,
                           fontWeight: FontWeight.bold,
                           color: Colors.brown[800],
+                          fontFamily: 'Georgia',
                         ),
                         maxLines: 4,
                         overflow: TextOverflow.ellipsis,
@@ -318,48 +296,25 @@ class _BookItem extends ConsumerWidget {
                     bottom: 0,
                     left: 0,
                     right: 0,
-                    child: Column(
-                      children: [
-                        if (book.totalPages > 0)
-                          Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.end,
-                              children: [
-                                Text(
-                                  '$progress%',
-                                  style: TextStyle(
-                                    fontSize: 8,
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.brown[600],
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        Container(
-                          height: 3,
-                          color: Colors.brown[50],
-                          child: Align(
-                            alignment: Alignment.centerLeft,
-                            child: FractionallySizedBox(
-                              widthFactor: (progress / 100).clamp(0.0, 1.0),
-                              child: Container(color: Colors.brown[400]),
-                            ),
-                          ),
-                        ),
-                      ],
+                    child: Container(
+                      height: 2,
+                      color: Colors.brown[50],
+                      alignment: Alignment.centerLeft,
+                      child: FractionallySizedBox(
+                        widthFactor: (progress / 100).clamp(0.0, 1.0),
+                        child: Container(color: Colors.brown[400]),
+                      ),
                     ),
                   ),
                 ],
               ),
             ),
           ),
-          const SizedBox(height: 5),
+          const SizedBox(height: 4),
           Text(
             book.title,
             style: TextStyle(
-              fontSize: isSmall ? 10 : 11,
+              fontSize: isSmall ? 9 : 10,
               fontWeight: FontWeight.w500,
               color: Colors.brown[900],
             ),

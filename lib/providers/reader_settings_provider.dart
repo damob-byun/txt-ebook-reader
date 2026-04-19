@@ -16,7 +16,7 @@ class ReaderSettingsNotifier extends StateNotifier<ReaderSettings> {
   }
 
   Future<void> updateFontSize(double size) async {
-    state = state.copyWith(fontSize: size);
+    state = state.copyWith(fontSize: size.clamp(12.0, 36.0));
     await _storage.saveSettings(state);
   }
 
@@ -32,6 +32,11 @@ class ReaderSettingsNotifier extends StateNotifier<ReaderSettings> {
 
   Future<void> updateEncoding(String encoding) async {
     state = state.copyWith(encoding: encoding);
+    await _storage.saveSettings(state);
+  }
+
+  Future<void> updateLineSpacing(double spacing) async {
+    state = state.copyWith(lineSpacing: spacing.clamp(1.0, 3.0));
     await _storage.saveSettings(state);
   }
 }

@@ -1,440 +1,848 @@
-import 'dart:io';
-import 'dart:convert';
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
-import 'package:charset_converter/charset_converter.dart';
 import '../models/book.dart';
 import '../models/reader_settings.dart';
 import '../providers/reader_settings_provider.dart';
 import '../providers/library_provider.dart';
 import '../services/reader_engine.dart';
 
+// ---------------------------------------------------------------------------
+// Theme helpers
+// ---------------------------------------------------------------------------
+
+class _TC {
+  final Color bg, text, bar;
+  const _TC(this.bg, this.text, this.bar);
+}
+
+_TC _tc(ReaderTheme t) {
+  switch (t) {
+    case ReaderTheme.night:
+      return const _TC(Color(0xFF1A1A1A), Color(0xFFBBBBBB), Color(0xEE111111));
+    case ReaderTheme.sepia:
+      return const _TC(Color(0xFFF4ECD8), Color(0xFF5B4636), Color(0xEE3D2B1F));
+    case ReaderTheme.soft:
+      return const _TC(Color(0xFFEEF3E8), Color(0xFF2D3B28), Color(0xEE2D3B28));
+    case ReaderTheme.classic:
+      return const _TC(Color(0xFFF8F7F2), Color(0xFF2C1E14), Color(0xEE2C1E14));
+  }
+}
+
+TextStyle _ts(ReaderSettings s) => TextStyle(
+  fontFamily: s.fontFamily == 'Georgia' ? 'Georgia' : null,
+  fontSize: s.fontSize,
+  height: s.lineSpacing,
+);
+
+// ---------------------------------------------------------------------------
+// ReaderScreen
+// ---------------------------------------------------------------------------
+
 class ReaderScreen extends HookConsumerWidget {
   final Book book;
-
   const ReaderScreen({super.key, required this.book});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final settings = ref.watch(readerSettingsProvider);
-    final showOverlay = useState(false);
-    final pages = useState<List<ReaderPage>>([]);
-    final chapters = useState<List<ReaderChapter>>([]);
-    final isLoading = useState(true);
-    final pageController = usePageController(initialPage: book.lastOffset);
-    final currentPage = useState(book.lastOffset);
+    final mq       = MediaQuery.of(context);
 
-    // Initial load and pagination
+    // Always use the latest book state from library for bookmarks
+    final library   = ref.watch(libraryProvider);
+    final latestBook = library.firstWhere((b) => b.id == book.id, orElse: () => book);
+
+    final isLoading     = useState(true);
+    final isLoadingMore = useState(false);
+    final allPages      = useState<List<ReaderPage>>([]);
+    final totalBytes    = useState(0);
+    final loadedEnd     = useState(0);
+    final pageCtrl      = usePageController();
+    final pageIdx       = useState(0);
+    final showOverlay   = useState(false);
+    final sliderVal     = useState(0.0);
+
+    // Tracks current reading byte without triggering re-renders
+    final readByte = useRef(book.lastOffset);
+
+    final colors = _tc(settings.theme);
+    final style  = _ts(settings);
+
+    final pageW = max(100.0, mq.size.width - settings.horizontalPadding * 2);
+    final pageH = max(100.0, mq.size.height - mq.padding.top - mq.padding.bottom - settings.verticalPadding * 2);
+
+    // -----------------------------------------------------------------------
+    // Load / reload (runs when font or encoding settings change)
+    // -----------------------------------------------------------------------
     useEffect(() {
-      Future<void> loadBook() async {
-        if (book.path == null) return;
-        final file = File(book.path!);
-        if (!await file.exists()) return;
+      final targetByte = readByte.value;
 
-        final bytes = await file.readAsBytes();
-        String text;
-
-        if (settings.encoding == 'auto') {
-          // Auto detection: try UTF-8 first, then CP949
-          try {
-            text = utf8.decode(bytes);
-          } catch (_) {
-            try {
-              text = await CharsetConverter.decode('cp949', bytes);
-            } catch (e) {
-              text = 'Decoding Error: $e';
-            }
-          }
-        } else {
-          try {
-            text = await CharsetConverter.decode(settings.encoding, bytes);
-          } catch (e) {
-            text = 'Decoding Error ($settings.encoding): $e';
-          }
+      Future<void> load() async {
+        if (book.path == null || book.path!.isEmpty) {
+          isLoading.value = false;
+          return;
         }
-        
-        // Measure constraints for pagination
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          final size = MediaQuery.of(context).size;
-          final padding = MediaQuery.of(context).padding;
-          final availableWidth = size.width - (settings.horizontalPadding * 2);
-          final availableHeight = size.height - (settings.verticalPadding * 2) - padding.top - padding.bottom;
+        isLoading.value = true;
+        try {
+          final fileSz = await ReaderEngine.fileSize(book.path!);
+          totalBytes.value = fileSz;
 
-          final paginatedPages = ReaderEngine.paginate(
-            text: text,
-            maxWidth: availableWidth,
-            maxHeight: availableHeight,
-            style: _getStyle(settings),
+          final chunkStart = fileSz > 0
+              ? (targetByte ~/ ReaderEngine.chunkBytes) * ReaderEngine.chunkBytes
+              : 0;
+
+          final (text, consumed) = await ReaderEngine.readChunk(
+            book.path!, chunkStart, settings.encoding,
           );
 
-          pages.value = paginatedPages;
-          chapters.value = ReaderEngine.detectChapters(text);
-          isLoading.value = false;
-          
-          // Update total pages in library
-          ref.read(libraryProvider.notifier).updateBook(
-                book.copyWith(totalPages: paginatedPages.length),
-              );
+          if (!context.mounted) return;
+          if (text.isEmpty) { isLoading.value = false; return; }
 
-          // Jump to last saved page if valid
-          if (book.lastOffset < paginatedPages.length) {
-            pageController.jumpToPage(book.lastOffset);
-            currentPage.value = book.lastOffset;
+          final pages = ReaderEngine.paginate(
+            text: text, maxWidth: pageW, maxHeight: pageH,
+            style: style,
+            byteStart: chunkStart, byteEnd: chunkStart + consumed,
+          );
+
+          allPages.value  = pages;
+          loadedEnd.value = chunkStart + consumed;
+
+          int savedIdx = 0;
+          if (pages.isNotEmpty) {
+            for (int i = 0; i < pages.length; i++) {
+              if (pages[i].byteStart <= targetByte) {
+                savedIdx = i;
+              } else {
+                break;
+              }
+            }
           }
-        });
+
+          if (fileSz > 0 && pages.isNotEmpty) {
+            sliderVal.value = pages[savedIdx].byteStart / fileSz;
+          }
+
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (pageCtrl.hasClients && savedIdx < pages.length) {
+              pageCtrl.jumpToPage(savedIdx);
+              pageIdx.value = savedIdx;
+            }
+          });
+        } catch (e) {
+          debugPrint('ReaderScreen: load error: $e');
+        } finally {
+          if (context.mounted) isLoading.value = false;
+        }
       }
 
-      loadBook();
+      load();
       return null;
-    }, [settings.fontSize, settings.fontFamily]);
+    }, [settings.fontSize, settings.fontFamily, settings.lineSpacing, settings.encoding, pageW, pageH]);
 
-    // Theme colors
-    final colors = _getThemeColors(settings.theme);
+    // -----------------------------------------------------------------------
+    // Load next chunk
+    // -----------------------------------------------------------------------
+    Future<void> loadNext() async {
+      if (isLoadingMore.value) return;
+      if (book.path == null) return;
+      if (loadedEnd.value >= totalBytes.value) return;
+
+      isLoadingMore.value = true;
+      final startByte = loadedEnd.value;
+
+      final (text, consumed) = await ReaderEngine.readChunk(
+        book.path!, startByte, settings.encoding,
+      );
+
+      if (!context.mounted || text.isEmpty) {
+        isLoadingMore.value = false;
+        return;
+      }
+
+      final newPages = ReaderEngine.paginate(
+        text: text, maxWidth: pageW, maxHeight: pageH,
+        style: style,
+        byteStart: startByte, byteEnd: startByte + consumed,
+      );
+
+      allPages.value  = [...allPages.value, ...newPages];
+      loadedEnd.value = startByte + consumed;
+      isLoadingMore.value = false;
+    }
+
+    // -----------------------------------------------------------------------
+    // Jump to byte offset (slider or bookmark)
+    // -----------------------------------------------------------------------
+    Future<void> jumpToByte(int targetByte) async {
+      if (book.path == null) return;
+
+      final pages = allPages.value;
+      for (int i = 0; i < pages.length; i++) {
+        if (pages[i].byteStart <= targetByte && targetByte < pages[i].byteEnd) {
+          pageCtrl.jumpToPage(i);
+          pageIdx.value = i;
+          readByte.value = targetByte;
+          if (totalBytes.value > 0) sliderVal.value = targetByte / totalBytes.value;
+          return;
+        }
+      }
+
+      isLoading.value = true;
+      final chunkStart =
+          (targetByte ~/ ReaderEngine.chunkBytes) * ReaderEngine.chunkBytes;
+      final (text, consumed) = await ReaderEngine.readChunk(
+        book.path!, chunkStart, settings.encoding,
+      );
+
+      if (!context.mounted || text.isEmpty) {
+        isLoading.value = false;
+        return;
+      }
+
+      final newPages = ReaderEngine.paginate(
+        text: text, maxWidth: pageW, maxHeight: pageH,
+        style: style,
+        byteStart: chunkStart, byteEnd: chunkStart + consumed,
+      );
+
+      allPages.value  = newPages;
+      loadedEnd.value = chunkStart + consumed;
+      readByte.value  = targetByte;
+
+      int jumpIdx = 0;
+      for (int i = 0; i < newPages.length; i++) {
+        if (newPages[i].byteStart <= targetByte) { jumpIdx = i; }
+        else { break; }
+      }
+
+      isLoading.value = false;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (pageCtrl.hasClients) {
+          pageCtrl.jumpToPage(jumpIdx);
+          pageIdx.value = jumpIdx;
+        }
+      });
+    }
+
+    // -----------------------------------------------------------------------
+    // Page changed
+    // -----------------------------------------------------------------------
+    void onPageChanged(int i) {
+      pageIdx.value = i;
+      final pages = allPages.value;
+      if (i >= pages.length) return;
+
+      final page = pages[i];
+      readByte.value = page.byteStart;
+      if (totalBytes.value > 0) sliderVal.value = page.byteStart / totalBytes.value;
+
+      final estimated = loadedEnd.value > 0 && pages.isNotEmpty
+          ? (totalBytes.value * pages.length ~/ loadedEnd.value)
+          : 0;
+
+      ref.read(libraryProvider.notifier).updateBook(latestBook.copyWith(
+        lastOffset: page.byteStart,
+        lastRead: DateTime.now(),
+        totalPages: estimated,
+      ));
+
+      if (i >= pages.length - 5) loadNext();
+    }
+
+    // -----------------------------------------------------------------------
+    // UI
+    // -----------------------------------------------------------------------
+    final safePages = allPages.value;
+    final curIdx    = pageIdx.value.clamp(0, safePages.isEmpty ? 0 : safePages.length - 1);
+    final progress  = totalBytes.value > 0 ? (sliderVal.value * 100).round() : 0;
+
+    final isBookmarked = safePages.isNotEmpty && curIdx < safePages.length &&
+        latestBook.bookmarks.contains(safePages[curIdx].byteStart);
 
     return Scaffold(
-      backgroundColor: colors.background,
-      drawer: _buildDrawer(context, ref, pages.value, chapters.value, pageController, showOverlay),
+      backgroundColor: colors.bg,
+      drawer: _BookmarkDrawer(
+        bookId: book.id,
+        totalBytes: totalBytes.value,
+        onJump: (byte) {
+          Navigator.pop(context);
+          jumpToByte(byte);
+        },
+      ),
       body: Stack(
         children: [
-          if (isLoading.value)
-            const Center(child: CircularProgressIndicator())
-          else
-            GestureDetector(
-              onTap: () => showOverlay.value = !showOverlay.value,
-              child: PageView.builder(
-                controller: pageController,
-                itemCount: pages.value.length,
-                onPageChanged: (index) {
-                  currentPage.value = index;
-                  // Auto bookmark
-                  ref.read(libraryProvider.notifier).updateBook(
-                        book.copyWith(lastOffset: index, lastRead: DateTime.now()),
-                      );
-                },
-                itemBuilder: (context, index) {
-                  return Padding(
-                    padding: EdgeInsets.symmetric(
-                      horizontal: settings.horizontalPadding,
-                      vertical: settings.verticalPadding,
-                    ),
-                    child: SafeArea(
-                      child: Text(
-                        pages.value[index].content,
-                        style: _getStyle(settings).copyWith(color: colors.text),
-                        textAlign: TextAlign.justify,
+          // ---- Reader content ----
+          SafeArea(
+            child: isLoading.value
+                ? Center(child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: colors.text.withOpacity(0.4),
+                  ))
+                : safePages.isEmpty
+                    ? Center(child: Text('텍스트를 읽을 수 없습니다.',
+                        style: TextStyle(color: colors.text)))
+                    : GestureDetector(
+                        onTapUp: (d) {
+                          final w = mq.size.width;
+                          final x = d.globalPosition.dx;
+                          if (x < w * 0.25) {
+                            if (curIdx > 0) {
+                              pageCtrl.previousPage(
+                                duration: const Duration(milliseconds: 250),
+                                curve: Curves.easeOut,
+                              );
+                            }
+                          } else if (x > w * 0.75) {
+                            pageCtrl.nextPage(
+                              duration: const Duration(milliseconds: 250),
+                              curve: Curves.easeOut,
+                            );
+                          } else {
+                            showOverlay.value = !showOverlay.value;
+                          }
+                        },
+                        child: PageView.builder(
+                          controller: pageCtrl,
+                          physics: const BouncingScrollPhysics(),
+                          itemCount: safePages.length + (isLoadingMore.value ? 1 : 0),
+                          onPageChanged: onPageChanged,
+                          itemBuilder: (ctx, i) {
+                            if (i >= safePages.length) {
+                              return Center(child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: colors.text.withOpacity(0.3),
+                              ));
+                            }
+                            return Padding(
+                              padding: EdgeInsets.symmetric(
+                                horizontal: settings.horizontalPadding,
+                                vertical: settings.verticalPadding,
+                              ),
+                              child: Text(
+                                safePages[i].content,
+                                style: style.copyWith(color: colors.text),
+                                textAlign: TextAlign.justify,
+                              ),
+                            );
+                          },
+                        ),
                       ),
-                    ),
-                  );
-                },
-              ),
+          ),
+
+          // ---- Overlay ----
+          if (showOverlay.value && safePages.isNotEmpty)
+            _buildOverlay(
+              context: context,
+              ref: ref,
+              colors: colors,
+              latestBook: latestBook,
+              safePages: safePages,
+              curIdx: curIdx,
+              progress: progress,
+              sliderVal: sliderVal,
+              totalBytes: totalBytes.value,
+              showOverlay: showOverlay,
+              isBookmarked: isBookmarked,
+              pageCtrl: pageCtrl,
+              onSettings: () {
+                showOverlay.value = false;
+                showModalBottomSheet(
+                  context: context,
+                  isScrollControlled: true,
+                  backgroundColor: Colors.transparent,
+                  builder: (_) => const _SettingsSheet(),
+                );
+              },
             ),
-          
-          // Overlay UI
-          if (showOverlay.value) _buildOverlay(context, ref, settings, colors, pages.value.length, pageController, showOverlay, currentPage),
         ],
       ),
     );
   }
 
-  Widget _buildOverlay(
-    BuildContext context, 
-    WidgetRef ref, 
-    ReaderSettings settings, 
-    _ThemeColors colors,
-    int totalPages,
-    PageController pageController,
-    ValueNotifier<bool> showOverlay,
-    ValueNotifier<int> currentPage,
-  ) {
+  Widget _buildOverlay({
+    required BuildContext context,
+    required WidgetRef ref,
+    required _TC colors,
+    required Book latestBook,
+    required List<ReaderPage> safePages,
+    required int curIdx,
+    required int progress,
+    required ValueNotifier<double> sliderVal,
+    required int totalBytes,
+    required ValueNotifier<bool> showOverlay,
+    required bool isBookmarked,
+    required PageController pageCtrl,
+    required VoidCallback onSettings,
+  }) {
+    final mq      = MediaQuery.of(context);
+    final curPage = safePages[curIdx];
+
     return Column(
       children: [
-        // Top Bar
+        // Top bar
         Container(
-          color: Colors.black.withOpacity(0.8),
-          padding: EdgeInsets.only(top: MediaQuery.of(context).padding.top, left: 16, right: 16, bottom: 8),
+          color: colors.bar,
+          padding: EdgeInsets.only(
+            top: mq.padding.top + 2,
+            left: 4, right: 4, bottom: 4,
+          ),
           child: Row(
             children: [
               IconButton(
-                icon: const Icon(Icons.menu, color: Colors.white),
-                onPressed: () => Scaffold.of(context).openDrawer(),
+                icon: const Icon(Icons.arrow_back_ios_new, size: 20),
+                color: Colors.white,
+                onPressed: () => Navigator.of(context).pop(),
+              ),
+              IconButton(
+                icon: const Icon(Icons.menu, size: 22),
+                color: Colors.white,
+                onPressed: () {
+                  showOverlay.value = false;
+                  Scaffold.of(context).openDrawer();
+                },
               ),
               Expanded(
                 child: Text(
-                  book.title,
+                  latestBook.title,
                   style: const TextStyle(
-                    color: Colors.white, 
+                    color: Colors.white,
                     fontWeight: FontWeight.bold,
                     fontSize: 14,
-                    fontFamily: 'Georgia',
+                    overflow: TextOverflow.ellipsis,
                   ),
-                  overflow: TextOverflow.ellipsis,
                 ),
               ),
+              // Bookmark toggle
               IconButton(
                 icon: Icon(
-                  book.bookmarks.contains(currentPage.value) ? Icons.bookmark : Icons.bookmark_border,
-                  color: Colors.white,
+                  isBookmarked ? Icons.bookmark : Icons.bookmark_border,
+                  size: 22,
                 ),
+                color: isBookmarked ? Colors.amber : Colors.white,
                 onPressed: () {
-                  final newBookmarks = List<int>.from(book.bookmarks);
-                  if (newBookmarks.contains(currentPage.value)) {
-                    newBookmarks.remove(currentPage.value);
+                  final bm = List<int>.from(latestBook.bookmarks);
+                  if (bm.contains(curPage.byteStart)) {
+                    bm.remove(curPage.byteStart);
                   } else {
-                    newBookmarks.add(currentPage.value);
+                    bm.add(curPage.byteStart);
                   }
-                  ref.read(libraryProvider.notifier).updateBook(book.copyWith(bookmarks: newBookmarks));
+                  ref.read(libraryProvider.notifier)
+                      .updateBook(latestBook.copyWith(bookmarks: bm));
                 },
+              ),
+              // Settings
+              IconButton(
+                icon: const Icon(Icons.tune, size: 22),
+                color: Colors.white,
+                onPressed: onSettings,
               ),
             ],
           ),
         ),
+
         const Spacer(),
-        // Bottom Bar
+
+        // Bottom bar
         Container(
-          color: Colors.black.withOpacity(0.8),
-          child: SafeArea(
-            top: false,
-            child: Padding(
-              padding: const EdgeInsets.all(20),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                   // Progress Slider
-                  Row(
-                    children: [
-                      Text('${currentPage.value + 1}', style: const TextStyle(color: Colors.white, fontSize: 12)),
-                      Expanded(
-                        child: Slider(
-                          value: currentPage.value.toDouble(),
-                          min: 0,
-                          max: (totalPages - 1).toDouble().clamp(0, double.infinity),
-                          onChanged: (v) {
-                            pageController.jumpToPage(v.toInt());
-                            currentPage.value = v.toInt();
-                          },
-                        ),
-                      ),
-                      Text('$totalPages', style: const TextStyle(color: Colors.white, fontSize: 12)),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-                  // Font Size Slider
-                  Row(
-                    children: [
-                      const Icon(Icons.text_fields, color: Colors.white, size: 20),
-                      Expanded(
-                        child: Slider(
-                          value: settings.fontSize,
-                          min: 12,
-                          max: 40,
-                          onChanged: (v) => ref.read(readerSettingsProvider.notifier).updateFontSize(v),
-                        ),
-                      ),
-                      Text(settings.fontSize.toInt().toString(), style: const TextStyle(color: Colors.white)),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-                  // Encoding Selector
-                  Row(
-                    children: [
-                       const Text('인코딩: ', style: TextStyle(color: Colors.white, fontSize: 12)),
-                       const SizedBox(width: 8),
-                       Expanded(
-                         child: SingleChildScrollView(
-                           scrollDirection: Axis.horizontal,
-                           child: Row(
-                             children: [
-                               _buildEncodingChip(ref, settings, 'auto', '자동 감지'),
-                               _buildEncodingChip(ref, settings, 'utf-8', 'UTF-8'),
-                               _buildEncodingChip(ref, settings, 'cp949', 'CP949'),
-                             ],
-                           ),
-                         ),
-                       ),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-                  // Theme Switcher
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceAround,
-                    children: ReaderTheme.values.map((t) {
-                      final themeColor = _getThemeColors(t);
-                      return GestureDetector(
-                        onTap: () => ref.read(readerSettingsProvider.notifier).updateTheme(t),
-                        child: Container(
-                          width: 40,
-                          height: 40,
-                          decoration: BoxDecoration(
-                            color: themeColor.background,
-                            shape: BoxShape.circle,
-                            border: Border.all(
-                              color: settings.theme == t ? Colors.blue : Colors.grey,
-                              width: settings.theme == t ? 3 : 1,
-                            ),
-                          ),
-                        ),
-                      );
-                    }).toList(),
-                  ),
-                ],
+          color: colors.bar,
+          padding: EdgeInsets.only(
+            left: 20, right: 20, top: 10,
+            bottom: mq.padding.bottom + 12,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SliderTheme(
+                data: SliderThemeData(
+                  thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+                  overlayShape: const RoundSliderOverlayShape(overlayRadius: 12),
+                  trackHeight: 3,
+                  activeTrackColor: Colors.white70,
+                  inactiveTrackColor: Colors.white24,
+                  thumbColor: Colors.white,
+                  overlayColor: Colors.white24,
+                ),
+                child: Slider(
+                  value: sliderVal.value.clamp(0.0, 1.0),
+                  onChanged: (v) => sliderVal.value = v,
+                  onChangeEnd: (v) {
+                    // Find closest loaded page
+                    final targetByte = (v * totalBytes).round();
+                    int closest = 0;
+                    for (int i = 0; i < safePages.length; i++) {
+                      if (safePages[i].byteStart <= targetByte) { closest = i; }
+                      else { break; }
+                    }
+                    pageCtrl.jumpToPage(closest);
+                  },
+                ),
               ),
-            ),
+              Text(
+                '${curIdx + 1}페이지  ·  $progress%',
+                style: const TextStyle(color: Colors.white60, fontSize: 12),
+              ),
+            ],
           ),
         ),
       ],
     );
   }
+}
 
-  Widget _buildDrawer(
-    BuildContext context, 
-    WidgetRef ref, 
-    List<ReaderPage> pages, 
-    List<ReaderChapter> chapters, 
-    PageController pageController,
-    ValueNotifier<bool> showOverlay,
-  ) {
-    return DefaultTabController(
-      length: 2,
-      child: Drawer(
-        backgroundColor: const Color(0xFFF5F5ED),
-        child: Column(
-          children: [
-            Container(
-              height: 150,
-              color: const Color(0xFF6B4E3D),
+// ---------------------------------------------------------------------------
+// Bookmark Drawer
+// ---------------------------------------------------------------------------
+
+class _BookmarkDrawer extends ConsumerWidget {
+  final String bookId;
+  final int totalBytes;
+  final void Function(int byteOffset) onJump;
+
+  const _BookmarkDrawer({
+    required this.bookId,
+    required this.totalBytes,
+    required this.onJump,
+  });
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final library = ref.watch(libraryProvider);
+    final bookIdx = library.indexWhere((b) => b.id == bookId);
+    if (bookIdx < 0) return const Drawer(child: Center(child: CircularProgressIndicator()));
+    final book = library[bookIdx];
+    final bm = book.bookmarks;
+
+    return Drawer(
+      backgroundColor: const Color(0xFFF5F5ED),
+      child: Column(
+        children: [
+          DrawerHeader(
+            decoration: const BoxDecoration(color: Color(0xFF6B4E3D)),
+            child: Align(
               alignment: Alignment.bottomLeft,
-              padding: const EdgeInsets.all(20),
-              child: Text(
-                book.title,
-                style: const TextStyle(
-                  color: Colors.white, 
-                  fontSize: 20, 
-                  fontWeight: FontWeight.bold,
-                  fontFamily: 'Georgia',
-                ),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-            const TabBar(
-              labelColor: Color(0xFF6B4E3D),
-              indicatorColor: Color(0xFF6B4E3D),
-              tabs: [
-                Tab(text: '목차'),
-                Tab(text: '책갈피'),
-              ],
-            ),
-            Expanded(
-              child: TabBarView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Chapter List
-                  ListView.builder(
-                    itemCount: chapters.length,
-                    itemBuilder: (context, index) {
-                      final chapter = chapters[index];
-                      return ListTile(
-                        title: Text(chapter.title, style: const TextStyle(fontSize: 14)),
-                        onTap: () {
-                          final pageIdx = _getPageForOffset(pages, chapter.offset);
-                          pageController.jumpToPage(pageIdx);
-                          Navigator.pop(context);
-                          showOverlay.value = false;
-                        },
-                      );
-                    },
-                  ),
-                  // Bookmark List
-                  ListView.builder(
-                    itemCount: book.bookmarks.length,
-                    itemBuilder: (context, index) {
-                      final bPageIdx = book.bookmarks[index];
-                      return ListTile(
-                        leading: const Icon(Icons.bookmark, color: Color(0xFF6B4E3D)),
-                        title: Text('페이지 ${bPageIdx + 1}'),
-                        subtitle: Text('${pages[bPageIdx].content.substring(0, 30).replaceAll('\n', ' ')}...'),
-                        onTap: () {
-                          pageController.jumpToPage(bPageIdx);
-                          Navigator.pop(context);
-                          showOverlay.value = false;
-                        },
-                        trailing: IconButton(
-                          icon: const Icon(Icons.delete_outline),
-                          onPressed: () {
-                            final newBookmarks = List<int>.from(book.bookmarks);
-                            newBookmarks.removeAt(index);
-                            ref.read(libraryProvider.notifier).updateBook(book.copyWith(bookmarks: newBookmarks));
-                            Navigator.pop(context);
-                          },
-                        ),
-                      );
-                    },
+                  const Icon(Icons.bookmark, color: Colors.white70, size: 28),
+                  const SizedBox(height: 8),
+                  Text(
+                    book.title,
+                    style: const TextStyle(color: Colors.white, fontSize: 16),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ],
               ),
             ),
-          ],
-        ),
+          ),
+          if (bm.isEmpty)
+            Expanded(
+              child: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.bookmark_border, size: 48, color: Colors.brown[200]),
+                    const SizedBox(height: 12),
+                    const Text('북마크가 없습니다.',
+                        style: TextStyle(color: Colors.brown)),
+                  ],
+                ),
+              ),
+            )
+          else
+            Expanded(
+              child: ListView.separated(
+                itemCount: bm.length,
+                separatorBuilder: (_, _) =>
+                    const Divider(height: 1, indent: 16, endIndent: 16),
+                itemBuilder: (ctx, i) {
+                  final offset = bm[i];
+                  final pct    = totalBytes > 0 ? (offset * 100 ~/ totalBytes) : 0;
+                  return ListTile(
+                    leading: const Icon(Icons.bookmark, color: Color(0xFF6B4E3D)),
+                    title: Text('$pct% 위치',
+                        style: const TextStyle(fontWeight: FontWeight.w500)),
+                    trailing: IconButton(
+                      icon: const Icon(Icons.delete_outline, size: 18),
+                      color: Colors.red[300],
+                      onPressed: () {
+                        final updated = List<int>.from(bm)..remove(offset);
+                        ref.read(libraryProvider.notifier)
+                            .updateBook(book.copyWith(bookmarks: updated));
+                      },
+                    ),
+                    onTap: () => onJump(offset),
+                  );
+                },
+              ),
+            ),
+        ],
       ),
     );
   }
+}
 
-  int _getPageForOffset(List<ReaderPage> pages, int offset) {
-    for (int i = 0; i < pages.length; i++) {
-      if (offset >= pages[i].startIndex && offset < pages[i].endIndex) {
-        return i;
-      }
-    }
-    return 0;
+// ---------------------------------------------------------------------------
+// Settings Bottom Sheet
+// ---------------------------------------------------------------------------
+
+class _SettingsSheet extends ConsumerWidget {
+  const _SettingsSheet();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final s = ref.watch(readerSettingsProvider);
+    final n = ref.read(readerSettingsProvider.notifier);
+    final mq = MediaQuery.of(context);
+    final colors = _tc(s.theme); // live-update when theme changes
+
+    final themeData = [
+      (ReaderTheme.classic, const Color(0xFFF8F7F2), '클래식'),
+      (ReaderTheme.sepia,   const Color(0xFFF4ECD8), '세피아'),
+      (ReaderTheme.soft,    const Color(0xFFEEF3E8), '녹색'),
+      (ReaderTheme.night,   const Color(0xFF1A1A1A), '야간'),
+    ];
+    const encodings  = ['auto', 'UTF-8', 'EUC-KR'];
+    const encLabels  = ['자동',  'UTF-8', 'EUC-KR'];
+    const fonts      = ['Georgia', 'system'];
+    const fontLabels = ['Georgia', '기본 폰트'];
+
+    return Container(
+      decoration: BoxDecoration(
+        color: colors.bg,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      padding: EdgeInsets.only(
+        bottom: mq.viewInsets.bottom + mq.padding.bottom + 20,
+        top: 12, left: 24, right: 24,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Handle
+          Container(
+            width: 40, height: 4,
+            margin: const EdgeInsets.only(bottom: 20),
+            decoration: BoxDecoration(
+              color: colors.text.withOpacity(0.3),
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+
+          // Font size
+          _Row(
+            label: '글자 크기',
+            colors: colors,
+            child: Row(
+              children: [
+                _IconBtn(icon: Icons.remove, colors: colors,
+                    onTap: () => n.updateFontSize(s.fontSize - 1)),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 14),
+                  child: Text('${s.fontSize.round()}',
+                      style: TextStyle(color: colors.text,
+                          fontWeight: FontWeight.bold, fontSize: 16)),
+                ),
+                _IconBtn(icon: Icons.add, colors: colors,
+                    onTap: () => n.updateFontSize(s.fontSize + 1)),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 18),
+
+          // Line spacing
+          _Row(
+            label: '줄 간격',
+            colors: colors,
+            child: Row(
+              children: [
+                Text(s.lineSpacing.toStringAsFixed(1),
+                    style: TextStyle(
+                        color: colors.text.withOpacity(0.7), fontSize: 12)),
+                Expanded(
+                  child: SliderTheme(
+                    data: SliderThemeData(
+                      thumbShape:
+                          const RoundSliderThumbShape(enabledThumbRadius: 6),
+                      trackHeight: 3,
+                      activeTrackColor: colors.text.withOpacity(0.6),
+                      inactiveTrackColor: colors.text.withOpacity(0.2),
+                      thumbColor: colors.text,
+                    ),
+                    child: Slider(
+                      value: s.lineSpacing,
+                      min: 1.0, max: 3.0, divisions: 20,
+                      onChanged: (v) => n.updateLineSpacing(v),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 18),
+
+          // Font family
+          _Row(
+            label: '글꼴',
+            colors: colors,
+            child: Row(
+              children: List.generate(fonts.length, (i) => Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: _Chip(
+                  label: fontLabels[i],
+                  selected: s.fontFamily == fonts[i],
+                  colors: colors,
+                  onTap: () => n.updateFontFamily(fonts[i]),
+                ),
+              )),
+            ),
+          ),
+
+          const SizedBox(height: 18),
+
+          // Encoding
+          _Row(
+            label: '인코딩',
+            colors: colors,
+            child: Row(
+              children: List.generate(encodings.length, (i) => Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: _Chip(
+                  label: encLabels[i],
+                  selected: s.encoding == encodings[i],
+                  colors: colors,
+                  onTap: () => n.updateEncoding(encodings[i]),
+                ),
+              )),
+            ),
+          ),
+
+          const SizedBox(height: 22),
+
+          // Themes
+          Row(
+            children: [
+              Text('테마',
+                  style: TextStyle(
+                      color: colors.text, fontWeight: FontWeight.w600)),
+              const SizedBox(width: 20),
+              ...themeData.map((td) => GestureDetector(
+                onTap: () => n.updateTheme(td.$1),
+                child: Tooltip(
+                  message: td.$3,
+                  child: Container(
+                    width: 32, height: 32,
+                    margin: const EdgeInsets.only(right: 12),
+                    decoration: BoxDecoration(
+                      color: td.$2,
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: s.theme == td.$1
+                            ? Colors.blue
+                            : colors.text.withOpacity(0.3),
+                        width: s.theme == td.$1 ? 2.5 : 1,
+                      ),
+                      boxShadow: s.theme == td.$1
+                          ? [BoxShadow(
+                              color: Colors.blue.withOpacity(0.3),
+                              blurRadius: 4,
+                            )]
+                          : null,
+                    ),
+                  ),
+                ),
+              )),
+            ],
+          ),
+        ],
+      ),
+    );
   }
+}
 
-  Widget _buildEncodingChip(WidgetRef ref, ReaderSettings settings, String value, String label) {
-    final isSelected = settings.encoding == value;
+// ---------------------------------------------------------------------------
+// Small UI helpers
+// ---------------------------------------------------------------------------
+
+class _Row extends StatelessWidget {
+  final String label;
+  final _TC colors;
+  final Widget child;
+  const _Row({required this.label, required this.colors, required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        SizedBox(
+          width: 70,
+          child: Text(label,
+              style: TextStyle(
+                  color: colors.text, fontWeight: FontWeight.w600)),
+        ),
+        Expanded(child: child),
+      ],
+    );
+  }
+}
+
+class _IconBtn extends StatelessWidget {
+  final IconData icon;
+  final _TC colors;
+  final VoidCallback onTap;
+  const _IconBtn({required this.icon, required this.colors, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
     return GestureDetector(
-      onTap: () => ref.read(readerSettingsProvider.notifier).updateEncoding(value),
+      onTap: onTap,
       child: Container(
-        margin: const EdgeInsets.only(right: 8),
+        width: 36, height: 36,
+        decoration: BoxDecoration(
+          border: Border.all(color: colors.text.withOpacity(0.3)),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Icon(icon, size: 18, color: colors.text),
+      ),
+    );
+  }
+}
+
+class _Chip extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final _TC colors;
+  final VoidCallback onTap;
+  const _Chip({
+    required this.label, required this.selected,
+    required this.colors, required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         decoration: BoxDecoration(
-          color: isSelected ? Colors.blue : Colors.grey[800],
-          borderRadius: BorderRadius.circular(16),
+          color: selected ? colors.text.withOpacity(0.15) : Colors.transparent,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: selected ? colors.text : colors.text.withOpacity(0.3),
+          ),
         ),
         child: Text(
           label,
           style: TextStyle(
-            color: Colors.white,
-            fontSize: 10,
-            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+            color: colors.text, fontSize: 12,
+            fontWeight: selected ? FontWeight.bold : FontWeight.normal,
           ),
         ),
       ),
     );
   }
-
-  TextStyle _getStyle(ReaderSettings settings) {
-    return TextStyle(
-      fontFamily: settings.fontFamily == 'Lora' ? 'Georgia' : 'Times New Roman',
-      fontSize: settings.fontSize,
-      height: settings.lineSpacing,
-    );
-  }
-
-  _ThemeColors _getThemeColors(ReaderTheme theme) {
-    switch (theme) {
-      case ReaderTheme.classic:
-        return _ThemeColors(background: const Color(0xFFF5F5ED), text: const Color(0xFF2C1E14));
-      case ReaderTheme.night:
-        return _ThemeColors(background: const Color(0xFF1A1A1A), text: const Color(0xFFB0B0B0));
-      case ReaderTheme.sepia:
-        return _ThemeColors(background: const Color(0xFFF4ECD8), text: const Color(0xFF5B4636));
-      case ReaderTheme.soft:
-        return _ThemeColors(background: const Color(0xFFE8F5E9), text: const Color(0xFF2E4D2E));
-    }
-  }
-}
-
-class _ThemeColors {
-  final Color background;
-  final Color text;
-  _ThemeColors({required this.background, required this.text});
 }
