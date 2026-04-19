@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:webdav_client/webdav_client.dart' as dav;
+import 'dart:async';
 import '../services/webdav_service.dart';
 import '../models/book.dart';
 import '../providers/library_provider.dart';
@@ -29,13 +30,46 @@ class WebDavBrowserScreen extends ConsumerStatefulWidget {
 class _WebDavBrowserScreenState extends ConsumerState<WebDavBrowserScreen> {
   String _currentPath = '/';
   List<dav.File> _files = [];
+  Map<dav.File, String> _lowercaseNames = {}; // Cache for search optimization
   bool _isLoading = true;
   String? _errorMessage;
+  
+  bool _isSearching = false;
+  final TextEditingController _searchController = TextEditingController();
+  String _searchQuery = '';
+  Timer? _debounce;
 
   @override
   void initState() {
     super.initState();
     _loadFiles();
+    _searchController.addListener(_onSearchChanged);
+  }
+
+  void _onSearchChanged() {
+    if (_debounce?.isActive ?? false) _debounce!.cancel();
+    _debounce = Timer(const Duration(milliseconds: 200), () {
+      if (mounted) {
+        setState(() {
+          _searchQuery = _searchController.text.toLowerCase();
+        });
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  List<dav.File> get _filteredFiles {
+    if (_searchQuery.isEmpty) return _files;
+    return _files.where((f) {
+      final name = _lowercaseNames[f] ?? '';
+      return name.contains(_searchQuery);
+    }).toList();
   }
 
   Future<void> _loadFiles() async {
@@ -59,6 +93,9 @@ class _WebDavBrowserScreenState extends ConsumerState<WebDavBrowserScreen> {
       if (!mounted) return;
       setState(() {
         _files = files;
+        _lowercaseNames = {
+          for (var f in files) f: f.name?.toLowerCase() ?? ''
+        };
         _isLoading = false;
         if (files.isEmpty && _currentPath != '/') {
           _errorMessage = "이 폴더에는 표시할 파일이 없습니다.";
@@ -78,10 +115,15 @@ class _WebDavBrowserScreenState extends ConsumerState<WebDavBrowserScreen> {
     return Scaffold(
       backgroundColor: const Color(0xFFF5F5F0),
       appBar: AppBar(
-        title: Text(_currentPath, style: const TextStyle(fontSize: 14)),
+        title: _isSearching 
+          ? _buildSearchField() 
+          : Text(_currentPath, style: const TextStyle(fontSize: 14, color: Colors.black87)),
         backgroundColor: Colors.transparent,
         elevation: 0,
-        leading: _currentPath != '/' ? IconButton(
+        iconTheme: const IconThemeData(color: Colors.black87),
+        leading: _isSearching 
+          ? null 
+          : _currentPath != '/' ? IconButton(
           icon: const Icon(Icons.arrow_back),
           onPressed: () {
             // Simple up directory logic
@@ -93,6 +135,19 @@ class _WebDavBrowserScreenState extends ConsumerState<WebDavBrowserScreen> {
         ) : null,
         actions: [
           IconButton(
+            icon: Icon(_isSearching ? Icons.close : Icons.search),
+            onPressed: () {
+              setState(() {
+                if (_isSearching) {
+                  _isSearching = false;
+                  _searchController.clear();
+                } else {
+                  _isSearching = true;
+                }
+              });
+            },
+          ),
+          IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: _loadFiles,
           ),
@@ -102,14 +157,14 @@ class _WebDavBrowserScreenState extends ConsumerState<WebDavBrowserScreen> {
           ? const Center(child: CircularProgressIndicator(color: Color(0xFF6B4E3D)))
           : _errorMessage != null
               ? _buildErrorPlaceholder()
-              : _files.isEmpty
+              : _filteredFiles.isEmpty
                   ? _buildEmptyPlaceholder()
                   : ListView.separated(
                       padding: const EdgeInsets.symmetric(vertical: 10),
-                      itemCount: _files.length,
+                      itemCount: _filteredFiles.length,
                       separatorBuilder: (_, __) => const Divider(height: 1, indent: 70),
                       itemBuilder: (context, index) {
-                        final file = _files[index];
+                        final file = _filteredFiles[index];
                         final isDir = file.isDir ?? false;
                         
                         return ListTile(
@@ -147,6 +202,21 @@ class _WebDavBrowserScreenState extends ConsumerState<WebDavBrowserScreen> {
     );
   }
 
+  }
+
+  Widget _buildSearchField() {
+    return TextField(
+      controller: _searchController,
+      autofocus: true,
+      decoration: const InputDecoration(
+        hintText: '파일 또는 폴더 검색...',
+        border: InputBorder.none,
+        hintStyle: TextStyle(color: Colors.black45, fontSize: 14),
+      ),
+      style: const TextStyle(color: Colors.black87, fontSize: 14),
+    );
+  }
+
   Widget _buildErrorPlaceholder() {
     return Center(
       child: Column(
@@ -166,9 +236,16 @@ class _WebDavBrowserScreenState extends ConsumerState<WebDavBrowserScreen> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.folder_open, size: 60, color: Colors.brown[200]),
+          Icon(
+            _isSearching ? Icons.search_off : Icons.folder_open,
+            size: 60,
+            color: Colors.brown[200],
+          ),
           const SizedBox(height: 20),
-          const Text('파일이 없습니다.'),
+          Text(
+            _isSearching ? '검색 결과가 없습니다.' : '파일이 없습니다.',
+            style: const TextStyle(color: Colors.brown),
+          ),
         ],
       ),
     );
