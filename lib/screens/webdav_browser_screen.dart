@@ -202,8 +202,6 @@ class _WebDavBrowserScreenState extends ConsumerState<WebDavBrowserScreen> {
     );
   }
 
-  }
-
   Widget _buildSearchField() {
     return TextField(
       controller: _searchController,

@@ -39,4 +39,9 @@ class ReaderSettingsNotifier extends StateNotifier<ReaderSettings> {
     state = state.copyWith(lineSpacing: spacing.clamp(1.0, 3.0));
     await _storage.saveSettings(state);
   }
+
+  Future<void> updateTwoPageMode(bool enabled) async {
+    state = state.copyWith(useTwoPageMode: enabled);
+    await _storage.saveSettings(state);
+  }
 }

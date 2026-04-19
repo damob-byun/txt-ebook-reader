@@ -13,6 +13,12 @@ class ReaderPage {
   const ReaderPage({required this.byteStart, required this.byteEnd, required this.content});
 }
 
+class SearchResult {
+  final int byteOffset;
+  final String snippet;
+  const SearchResult({required this.byteOffset, required this.snippet});
+}
+
 class ReaderEngine {
   static const int chunkBytes = 131072; // 128 KB per chunk
 
@@ -280,5 +286,57 @@ class ReaderEngine {
       }
     }
     return _snap(text, start, best, target);
+  }
+
+  /// Perform a full-text search across the entire file in chunks.
+  static Future<List<SearchResult>> fullTextSearch({
+    required String path,
+    required String query,
+    required String encoding,
+    int maxResults = 200,
+  }) async {
+    if (query.isEmpty) return [];
+    
+    final file = File(path);
+    if (!await file.exists()) return [];
+    
+    final fileLen = await file.length();
+    final results = <SearchResult>[];
+    
+    int offset = 0;
+    final searchChunk = chunkBytes * 2; // Read 256KB for search chunks to speed up
+
+    while (offset < fileLen && results.length < maxResults) {
+      final (text, consumed) = await readChunk(path, offset, encoding);
+      if (text.isEmpty) break;
+
+      final lowerQuery = query.toLowerCase();
+      final lowerText = text.toLowerCase();
+      
+      int startSearch = 0;
+      while (true) {
+        final matchIdx = lowerText.indexOf(lowerQuery, startSearch);
+        if (matchIdx == -1) break;
+
+        // Context snippet
+        final snippetStart = max(0, matchIdx - 20);
+        final snippetEnd = min(text.length, matchIdx + query.length + 20);
+        String snippet = text.substring(snippetStart, snippetEnd).replaceAll('\n', ' ');
+        if (snippetStart > 0) snippet = '...$snippet';
+        if (snippetEnd < text.length) snippet = '$snippet...';
+
+        // Approximate byte offset
+        final byteOffset = offset + (matchIdx * consumed ~/ text.length);
+        
+        results.add(SearchResult(byteOffset: byteOffset, snippet: snippet));
+        if (results.length >= maxResults) break;
+        
+        startSearch = matchIdx + 1;
+      }
+
+      offset += consumed;
+    }
+    
+    return results;
   }
 }

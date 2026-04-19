@@ -8,6 +8,7 @@ class ReaderSettings {
   final double lineSpacing;
   final double horizontalPadding;
   final double verticalPadding;
+  final bool? useTwoPageMode; // null means auto-detect based on width
 
   ReaderSettings({
     this.fontSize = 18.0,
@@ -17,6 +18,7 @@ class ReaderSettings {
     this.lineSpacing = 1.7,
     this.horizontalPadding = 24.0,
     this.verticalPadding = 32.0,
+    this.useTwoPageMode,
   });
 
   ReaderSettings copyWith({
@@ -27,6 +29,7 @@ class ReaderSettings {
     double? lineSpacing,
     double? horizontalPadding,
     double? verticalPadding,
+    bool? useTwoPageMode,
   }) {
     return ReaderSettings(
       fontSize: fontSize ?? this.fontSize,
@@ -36,6 +39,7 @@ class ReaderSettings {
       lineSpacing: lineSpacing ?? this.lineSpacing,
       horizontalPadding: horizontalPadding ?? this.horizontalPadding,
       verticalPadding: verticalPadding ?? this.verticalPadding,
+      useTwoPageMode: useTwoPageMode ?? this.useTwoPageMode,
     );
   }
 
@@ -47,6 +51,7 @@ class ReaderSettings {
     'lineSpacing': lineSpacing,
     'horizontalPadding': horizontalPadding,
     'verticalPadding': verticalPadding,
+    'useTwoPageMode': useTwoPageMode,
   };
 
   factory ReaderSettings.fromJson(Map<String, dynamic> json) => ReaderSettings(
@@ -57,5 +62,6 @@ class ReaderSettings {
     lineSpacing: (json['lineSpacing'] as num?)?.toDouble() ?? 1.7,
     horizontalPadding: (json['horizontalPadding'] as num?)?.toDouble() ?? 24.0,
     verticalPadding: (json['verticalPadding'] as num?)?.toDouble() ?? 32.0,
+    useTwoPageMode: json['useTwoPageMode'],
   );
 }
