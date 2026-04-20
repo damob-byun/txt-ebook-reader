@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
@@ -8,7 +9,8 @@ import '../providers/reader_settings_provider.dart';
 import '../providers/library_provider.dart';
 import '../services/reader_engine.dart';
 import '../providers/app_settings_provider.dart';
-import 'package:volume_key_board/volume_key_board.dart';
+import '../models/app_settings.dart';
+import 'package:perfect_volume_control/perfect_volume_control.dart';
 
 // ---------------------------------------------------------------------------
 // Theme helpers
@@ -80,12 +82,17 @@ class ReaderScreen extends HookConsumerWidget {
     final totalBytes = useState(0);
     final loadedEnd = useState(0);
     final pageCtrl = usePageController();
+    final scrollCtrl = useScrollController();
     final pageIdx = useState(0);
     final showOverlay = useState(false);
     final sliderVal = useState(0.0);
+    final isDragging = useState(false);
 
     // Tracks current reading byte without triggering re-renders
     final readByte = useRef(book.lastOffset);
+    final jumpTimer = useRef<Timer?>(null);
+    final curIdxRef = useRef(0);
+    final lastSafePagesRef = useRef<List<ReaderPage>>([]);
 
     // Automatic Two-Page Mode detection (First time only)
     useEffect(() {
@@ -103,10 +110,11 @@ class ReaderScreen extends HookConsumerWidget {
 
     final colors = _tc(settings.theme);
     final style = _ts(settings);
-    final curIdx = pageIdx.value;
+
 
     // Page dimensions
     // In two-page mode, each logical page has half the width (minus a small gap)
+    final safeAreaH = max(100.0, mq.size.height - mq.padding.top - mq.padding.bottom);
     final totalW = max(100.0, mq.size.width - settings.horizontalPadding * 2);
     final pageW = isTwoPage ? (totalW / 2) - 10 : totalW;
     
@@ -181,10 +189,16 @@ class ReaderScreen extends HookConsumerWidget {
 
             WidgetsBinding.instance.addPostFrameCallback((_) {
               int displayIdx = isTwoPage ? savedIdx ~/ 2 : savedIdx;
-              if (pageCtrl.hasClients) {
-                pageCtrl.jumpToPage(displayIdx);
-                pageIdx.value = savedIdx;
+              if (appSettings.useScrollMode) {
+                if (scrollCtrl.hasClients) {
+                  scrollCtrl.jumpTo(displayIdx * safeAreaH);
+                }
+              } else {
+                if (pageCtrl.hasClients) {
+                  pageCtrl.jumpToPage(displayIdx);
+                }
               }
+              pageIdx.value = savedIdx;
             });
           } catch (e) {
             debugPrint('ReaderScreen: load error: $e');
@@ -208,7 +222,47 @@ class ReaderScreen extends HookConsumerWidget {
     );
 
     final safePages = allPages.value;
+    lastSafePagesRef.value = safePages;
+    final curIdx = pageIdx.value.clamp(0, max(0, safePages.length - 1)).toInt();
+    curIdxRef.value = curIdx;
 
+
+    void triggerPageTurn(bool isNext) {
+      final currentIdx = curIdxRef.value;
+      final pages = lastSafePagesRef.value;
+      
+      if (!isNext) {
+        if (appSettings.useScrollMode) {
+          if (scrollCtrl.hasClients) {
+            final target = max(0.0, scrollCtrl.offset - safeAreaH);
+            scrollCtrl.animateTo(target,
+                duration: const Duration(milliseconds: 250),
+                curve: Curves.easeOut);
+          }
+        } else {
+          if (currentIdx > 0) {
+            pageCtrl.previousPage(
+                duration: const Duration(milliseconds: 250),
+                curve: Curves.easeOut);
+          }
+        }
+      } else {
+        if (appSettings.useScrollMode) {
+          if (scrollCtrl.hasClients) {
+            final target = min(scrollCtrl.position.maxScrollExtent, scrollCtrl.offset + safeAreaH);
+            scrollCtrl.animateTo(target,
+                duration: const Duration(milliseconds: 250),
+                curve: Curves.easeOut);
+          }
+        } else {
+          if (currentIdx < pages.length - 1) {
+            pageCtrl.nextPage(
+                duration: const Duration(milliseconds: 250),
+                curve: Curves.easeOut);
+          }
+        }
+      }
+    }
 
     // -----------------------------------------------------------------------
     // Volume Buttons Listener
@@ -217,43 +271,43 @@ class ReaderScreen extends HookConsumerWidget {
       if (!appSettings.useVolumeKeys) return null;
 
       bool isDisposed = false;
+      StreamSubscription<double>? subscription;
+      double lastVolume = -1.0; // Force first event to trigger
+      bool isResetting = false;
       
       void startListening() async {
         try {
-          // Give native plugins some time to stabilize, 
-          // especially after the reader screen build and channel setup.
-          await Future.delayed(const Duration(milliseconds: 500));
+          // Initial delay to avoid conflicts during screen transition
+          await Future.delayed(const Duration(milliseconds: 600));
           if (isDisposed) return;
 
-          final volumePlugin = VolumeKeyBoard.instance;
-          await volumePlugin.addListener((event) {
-            if (isDisposed) return;
-            if (event == VolumeKey.up) {
-              if (curIdx > 0) {
-                if (appSettings.useScrollMode) {
-                  pageCtrl.animateToPage(curIdx - 1,
-                      duration: const Duration(milliseconds: 250),
-                      curve: Curves.easeOut);
-                } else {
-                  pageCtrl.previousPage(
-                      duration: const Duration(milliseconds: 250),
-                      curve: Curves.easeOut);
-                }
-              }
-            } else if (event == VolumeKey.down) {
-              if (appSettings.useScrollMode) {
-                pageCtrl.animateToPage(curIdx + 1,
-                    duration: const Duration(milliseconds: 250),
-                    curve: Curves.easeOut);
-              } else {
-                pageCtrl.nextPage(
-                    duration: const Duration(milliseconds: 250),
-                    curve: Curves.easeOut);
-              }
+          PerfectVolumeControl.hideUI = true;
+          lastVolume = await PerfectVolumeControl.getVolume();
+
+          subscription = PerfectVolumeControl.stream.listen((volume) async {
+            if (isDisposed || isResetting) return;
+            
+            // Ignore tiny fluctuations (noise)
+            if (lastVolume != -1.0 && (volume - lastVolume).abs() < 0.001) return;
+
+            final isUp = volume > lastVolume;
+            lastVolume = volume;
+
+            triggerPageTurn(!isUp); // isUp means Volume Up, which is previous page (isNext = false)
+
+            // Hack: Reset volume if it gets too close to the edges to allow infinite scrolling
+            // We use a wider margin to be safe and ensure the system UI doesn't pop up
+            if (volume <= 0.15 || volume >= 0.85) {
+              isResetting = true;
+              await PerfectVolumeControl.setVolume(0.5);
+              lastVolume = 0.5;
+              // Small delay to let the system stabilize after programmatic volume change
+              await Future.delayed(const Duration(milliseconds: 300));
+              isResetting = false;
             }
           });
         } catch (e) {
-          debugPrint('ReaderScreen: VolumeKeyBoard initialization failed: $e');
+          debugPrint('ReaderScreen: PerfectVolumeControl initialization failed: $e');
         }
       }
 
@@ -261,11 +315,11 @@ class ReaderScreen extends HookConsumerWidget {
 
       return () {
         isDisposed = true;
-        try {
-          VolumeKeyBoard.instance.removeListener();
-        } catch (_) {}
+        subscription?.cancel();
+        // Restore system UI on exit
+        PerfectVolumeControl.hideUI = false;
       };
-    }, [appSettings.useVolumeKeys, curIdx, safePages.length]);
+    }, [appSettings.useVolumeKeys]);
 
     // -----------------------------------------------------------------------
     // Load next chunk
@@ -313,7 +367,11 @@ class ReaderScreen extends HookConsumerWidget {
       for (int i = 0; i < pages.length; i++) {
         if (pages[i].byteStart <= targetByte && targetByte < pages[i].byteEnd) {
           int displayIdx = isTwoPage ? i ~/ 2 : i;
-          pageCtrl.jumpToPage(displayIdx);
+          if (appSettings.useScrollMode) {
+             if (scrollCtrl.hasClients) scrollCtrl.jumpTo(displayIdx * safeAreaH);
+          } else {
+             pageCtrl.jumpToPage(displayIdx);
+          }
           pageIdx.value = i;
           readByte.value = targetByte;
           if (totalBytes.value > 0)
@@ -374,6 +432,7 @@ class ReaderScreen extends HookConsumerWidget {
     void onPageChanged(int displayIdx) {
       final actualIdx = isTwoPage ? displayIdx * 2 : displayIdx;
       pageIdx.value = actualIdx;
+      curIdxRef.value = actualIdx;
       
       final pages = allPages.value;
       if (actualIdx >= pages.length) return;
@@ -403,7 +462,7 @@ class ReaderScreen extends HookConsumerWidget {
     // -----------------------------------------------------------------------
     // UI
     // -----------------------------------------------------------------------
-    final progress = totalBytes.value > 0 ? (sliderVal.value * 100).round() : 0;
+    final progress = totalBytes.value > 0 ? (sliderVal.value * 100).toStringAsFixed(2) : '0.00';
 
     final isBookmarked =
         safePages.isNotEmpty &&
@@ -447,26 +506,103 @@ class ReaderScreen extends HookConsumerWidget {
                         return;
                       }
                       final w = mq.size.width;
+                      final h = mq.size.height;
                       final x = d.globalPosition.dx;
-                      if (x < w * 0.25) {
-                        if (pageIdx.value > 0) {
-                          pageCtrl.previousPage(
-                            duration: const Duration(milliseconds: 250),
-                            curve: Curves.easeOut,
-                          );
+                      final y = d.globalPosition.dy;
+
+                      bool isNext = false;
+                      bool isPrev = false;
+                      
+                      // Absolute center override (middle third)
+                      bool isCenter = (x > w * 0.33 && x < w * 0.67) && (y > h * 0.33 && y < h * 0.67);
+
+                      if (!isCenter) {
+                        switch (appSettings.touchZoneStyle) {
+                          case TouchZoneStyle.leftRight:
+                            if (x < w * 0.25) isPrev = true;
+                            else if (x > w * 0.75) isNext = true;
+                            break;
+                          case TouchZoneStyle.anywhereNext:
+                            if (y > h * 0.2) isNext = true;
+                            break;
+                          case TouchZoneStyle.bottomNext:
+                            if (y > h * 0.7) {
+                              isNext = true;
+                            } else if (y > h * 0.3) {
+                              if (x < w * 0.5) isPrev = true;
+                              else isNext = true;
+                            }
+                            break;
+                          case TouchZoneStyle.lShape:
+                            if (x > w * 0.7 || y > h * 0.7) {
+                              isNext = true;
+                            } else if (x < w * 0.3 && y < h * 0.3) {
+                              isPrev = true;
+                            }
+                            break;
                         }
-                      } else if (x > w * 0.75) {
-                        pageCtrl.nextPage(
-                          duration: const Duration(milliseconds: 250),
-                          curve: Curves.easeOut,
-                        );
+                      }
+
+                      if (isPrev) {
+                        triggerPageTurn(false);
+                      } else if (isNext) {
+                        triggerPageTurn(true);
                       } else {
                         showOverlay.value = !showOverlay.value;
                       }
                     },
-                    child: PageView.builder(
+                    child: appSettings.useScrollMode 
+                    ? NotificationListener<ScrollUpdateNotification>(
+                        onNotification: (notif) {
+                           if (!scrollCtrl.hasClients) return false;
+                           final idx = (scrollCtrl.offset / safeAreaH).round();
+                           final pagesCount = isTwoPage ? (safePages.length / 2).ceil() : safePages.length;
+                           if (idx != (isTwoPage ? pageIdx.value ~/ 2 : pageIdx.value) && idx >= 0 && idx < pagesCount) {
+                               onPageChanged(idx);
+                           }
+                           if (scrollCtrl.position.extentAfter < safeAreaH * 2) {
+                               loadNext();
+                           }
+                           return false;
+                        },
+                        child: ListView.builder(
+                          controller: scrollCtrl,
+                          itemExtent: safeAreaH,
+                          physics: const BouncingScrollPhysics(),
+                          itemCount: isTwoPage 
+                              ? (safePages.length / 2).ceil() + (isLoadingMore.value ? 1 : 0)
+                              : safePages.length + (isLoadingMore.value ? 1 : 0),
+                          itemBuilder: (ctx, i) {
+                            if (isTwoPage) {
+                              final leftIdx = i * 2;
+                              final rightIdx = i * 2 + 1;
+                              if (leftIdx >= safePages.length) {
+                                return Center(child: CircularProgressIndicator(color: colors.text.withOpacity(0.3)));
+                              }
+                              return SizedBox(
+                                height: safeAreaH,
+                                child: Row(
+                                  children: [
+                                    Expanded(child: _buildPage(safePages[leftIdx], settings, colors, style)),
+                                    const VerticalDivider(width: 1, thickness: 0.1, color: Colors.black12),
+                                    Expanded(child: rightIdx < safePages.length ? _buildPage(safePages[rightIdx], settings, colors, style) : Container()),
+                                  ],
+                                ),
+                              );
+                            }
+                            if (i >= safePages.length) {
+                              return Center(child: CircularProgressIndicator(strokeWidth: 2, color: colors.text.withOpacity(0.3)));
+                            }
+                            return SizedBox(
+                              height: safeAreaH,
+                              child: _buildPage(safePages[i], settings, colors, style),
+                            );
+                          },
+                        ),
+                      )
+                    : PageView.builder(
                       controller: pageCtrl,
-                      scrollDirection: appSettings.useScrollMode ? Axis.vertical : Axis.horizontal,
+                      scrollDirection: Axis.horizontal,
                       physics: const BouncingScrollPhysics(),
                       itemCount: isTwoPage 
                           ? (safePages.length / 2).ceil() + (isLoadingMore.value ? 1 : 0)
@@ -531,7 +667,9 @@ class ReaderScreen extends HookConsumerWidget {
               pageIdx: pageIdx,
               progress: progress,
               sliderVal: sliderVal,
+              isDragging: isDragging,
               totalBytes: totalBytes.value,
+              jumpTimer: jumpTimer,
               showOverlay: showOverlay,
               isBookmarked: isBookmarked,
               pageCtrl: pageCtrl,
@@ -562,9 +700,11 @@ class ReaderScreen extends HookConsumerWidget {
     required Book latestBook,
     required List<ReaderPage> safePages,
     required ValueNotifier<int> pageIdx,
-    required int progress,
+    required String progress,
     required ValueNotifier<double> sliderVal,
+    required ValueNotifier<bool> isDragging,
     required int totalBytes,
+    required ObjectRef<Timer?> jumpTimer,
     required ValueNotifier<bool> showOverlay,
     required bool isBookmarked,
     required PageController pageCtrl,
@@ -691,6 +831,19 @@ class ReaderScreen extends HookConsumerWidget {
           ),
         ),
 
+        if (isDragging.value)
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            decoration: BoxDecoration(
+              color: Colors.black87,
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Text(
+              '$progress%',
+              style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+          ),
+
         const Spacer(),
 
         // Bottom bar
@@ -721,20 +874,43 @@ class ReaderScreen extends HookConsumerWidget {
                 ),
                 child: Slider(
                   value: sliderVal.value.clamp(0.0, 1.0),
-                  onChanged: (v) => sliderVal.value = v,
-                  onChangeEnd: (v) {
-                    // Find closest loaded page
+                  onChanged: (v) {
+                    isDragging.value = true;
+                    sliderVal.value = v;
                     final targetByte = (v * totalBytes).round();
-                    int closest = 0;
+                    
+                    // Try synchronous jump if within loaded pages
+                    int closest = -1;
                     for (int i = 0; i < safePages.length; i++) {
-                      if (safePages[i].byteStart <= targetByte) {
+                      if (safePages[i].byteStart <= targetByte && targetByte < safePages[i].byteEnd) {
                         closest = i;
-                      } else {
                         break;
+                      } else if (safePages[i].byteStart <= targetByte) {
+                        closest = i;
                       }
                     }
-                    int displayIdx = (mq.size.width > 900 && (settings.useTwoPageMode ?? true)) ? closest ~/ 2 : closest;
-                    pageCtrl.jumpToPage(displayIdx);
+
+                    if (closest != -1) {
+                      final isTwo = mq.size.width > 900 && (settings.useTwoPageMode ?? true);
+                      int displayIdx = isTwo ? closest ~/ 2 : closest;
+                      if (pageCtrl.hasClients && pageIdx.value != closest) {
+                        pageCtrl.jumpToPage(displayIdx);
+                        pageIdx.value = closest;
+                      }
+                    }
+
+                    // Debounced full jump (for unloaded chunks)
+                    jumpTimer.value?.cancel();
+                    jumpTimer.value = Timer(const Duration(milliseconds: 100), () {
+                      if (closest == -1 || targetByte < safePages.first.byteStart || targetByte >= safePages.last.byteEnd) {
+                        jumpToByte(targetByte);
+                      }
+                    });
+                  },
+                  onChangeEnd: (v) {
+                    isDragging.value = false;
+                    jumpTimer.value?.cancel();
+                    jumpToByte((v * totalBytes).round());
                   },
                 ),
               ),
@@ -1068,6 +1244,38 @@ class _SettingsSheet extends ConsumerWidget {
             ],
           ),
 
+          // Touch Zones
+          _Row(
+            label: '터치 제어',
+            colors: colors,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: List.generate(
+                      TouchZoneStyle.values.length,
+                      (i) => Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: _Chip(
+                          label: const ['기본 (좌우)', '어디든 다음', '하단 위주', 'ㄱ자 영역'][i],
+                          selected: ref.watch(appSettingsProvider).touchZoneStyle == TouchZoneStyle.values[i],
+                          colors: colors,
+                          onTap: () => ref.read(appSettingsProvider.notifier).updateTouchZoneStyle(TouchZoneStyle.values[i]),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                _TouchZoneVisualizer(
+                   style: ref.watch(appSettingsProvider).touchZoneStyle,
+                ),
+              ],
+            ),
+          ),
+          
           const SizedBox(height: 18),
           
           // Two-Page Mode
@@ -1095,6 +1303,71 @@ class _SettingsSheet extends ConsumerWidget {
   }
 }
 
+class _TouchZoneVisualizer extends StatelessWidget {
+  final TouchZoneStyle style;
+  const _TouchZoneVisualizer({required this.style});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 120,
+      height: 160,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border.all(color: Colors.grey.withOpacity(0.4)),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      clipBehavior: Clip.hardEdge,
+      child: Stack(
+        children: [
+          Positioned.fill(child: _ZoneBox('메뉴', Colors.grey.withOpacity(0.2))),
+          
+          if (style == TouchZoneStyle.leftRight) ...[
+            Positioned(left: 0, top: 0, bottom: 0, width: 30, child: _ZoneBox('이전', Colors.red.withOpacity(0.25))),
+            Positioned(right: 0, top: 0, bottom: 0, width: 30, child: _ZoneBox('다음', Colors.green.withOpacity(0.25))),
+          ] else if (style == TouchZoneStyle.anywhereNext) ...[
+            Positioned(left: 0, right: 0, top: 32, bottom: 0, child: _ZoneBox('다음', Colors.green.withOpacity(0.25))),
+          ] else if (style == TouchZoneStyle.bottomNext) ...[
+            Positioned(left: 0, width: 60, top: 48, bottom: 48, child: _ZoneBox('이전', Colors.red.withOpacity(0.25))),
+            Positioned(right: 0, width: 60, top: 48, bottom: 48, child: _ZoneBox('다음', Colors.green.withOpacity(0.25))),
+            Positioned(left: 0, right: 0, bottom: 0, height: 48, child: _ZoneBox('다음', Colors.green.withOpacity(0.25))),
+          ] else if (style == TouchZoneStyle.lShape) ...[
+            Positioned(right: 0, top: 0, bottom: 0, width: 36, child: _ZoneBox('다음', Colors.green.withOpacity(0.25))),
+            Positioned(left: 0, right: 0, bottom: 0, height: 48, child: _ZoneBox('다음', Colors.green.withOpacity(0.25))),
+            Positioned(left: 0, top: 0, width: 36, height: 48, child: _ZoneBox('이전', Colors.red.withOpacity(0.25))),
+          ],
+          
+          // Absolute Center override for Menu
+          Positioned(
+            left: 120 * 0.33, right: 120 * 0.33,
+            top: 160 * 0.33, bottom: 160 * 0.33,
+            child: _ZoneBox('중앙\n메뉴', Colors.grey.withOpacity(0.65)),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ZoneBox extends StatelessWidget {
+  final String label;
+  final Color color;
+  const _ZoneBox(this.label, this.color);
+  
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: color,
+        border: Border.all(color: Colors.black12, width: 0.5),
+      ),
+      child: Center(
+        child: Text(label, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.black54)),
+      ),
+    );
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Small UI helpers
 // ---------------------------------------------------------------------------
@@ -1104,7 +1377,7 @@ class _SettingsSheet extends ConsumerWidget {
 // ---------------------------------------------------------------------------
 
 class _ReaderFooter extends HookWidget {
-  final int progress;
+  final String progress;
   final _TC colors;
 
   const _ReaderFooter({required this.progress, required this.colors});

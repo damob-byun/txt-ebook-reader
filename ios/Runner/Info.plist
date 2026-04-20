@@ -52,5 +52,7 @@
 	</dict>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>WebDAV 서버에 연결하여 책을 가져오기 위해 로컬 네트워크 권한이 필요합니다.</string>
+	<key>FLTEnableImpeller</key>
+	<false/>
 </dict>
 </plist>

@@ -39,4 +39,9 @@ class AppSettingsNotifier extends StateNotifier<AppSettings> {
     state = state.copyWith(useScrollMode: val);
     await _prefs.setString(_key, jsonEncode(state.toJson()));
   }
+
+  Future<void> updateTouchZoneStyle(TouchZoneStyle style) async {
+    state = state.copyWith(touchZoneStyle: style);
+    await _prefs.setString(_key, jsonEncode(state.toJson()));
+  }
 }
