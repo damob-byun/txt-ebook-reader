@@ -44,4 +44,9 @@ class AppSettingsNotifier extends StateNotifier<AppSettings> {
     state = state.copyWith(touchZoneStyle: style);
     await _prefs.setString(_key, jsonEncode(state.toJson()));
   }
+
+  Future<void> updatePageAnimation(bool val) async {
+    state = state.copyWith(usePageAnimation: val);
+    await _prefs.setString(_key, jsonEncode(state.toJson()));
+  }
 }

@@ -235,30 +235,38 @@ class ReaderScreen extends HookConsumerWidget {
         if (appSettings.useScrollMode) {
           if (scrollCtrl.hasClients) {
             final target = max(0.0, scrollCtrl.offset - safeAreaH);
-            scrollCtrl.animateTo(target,
-                duration: const Duration(milliseconds: 250),
-                curve: Curves.easeOut);
+            if (appSettings.usePageAnimation) {
+              scrollCtrl.animateTo(target, duration: const Duration(milliseconds: 250), curve: Curves.easeOut);
+            } else {
+              scrollCtrl.jumpTo(target);
+            }
           }
         } else {
-          if (currentIdx > 0) {
-            pageCtrl.previousPage(
-                duration: const Duration(milliseconds: 250),
-                curve: Curves.easeOut);
+          if (currentIdx > 0 && pageCtrl.hasClients) {
+            if (appSettings.usePageAnimation) {
+              pageCtrl.previousPage(duration: const Duration(milliseconds: 250), curve: Curves.easeOut);
+            } else {
+              pageCtrl.jumpToPage((pageCtrl.page ?? 0).round() - 1);
+            }
           }
         }
       } else {
         if (appSettings.useScrollMode) {
           if (scrollCtrl.hasClients) {
             final target = min(scrollCtrl.position.maxScrollExtent, scrollCtrl.offset + safeAreaH);
-            scrollCtrl.animateTo(target,
-                duration: const Duration(milliseconds: 250),
-                curve: Curves.easeOut);
+            if (appSettings.usePageAnimation) {
+              scrollCtrl.animateTo(target, duration: const Duration(milliseconds: 250), curve: Curves.easeOut);
+            } else {
+              scrollCtrl.jumpTo(target);
+            }
           }
         } else {
-          if (currentIdx < pages.length - 1) {
-            pageCtrl.nextPage(
-                duration: const Duration(milliseconds: 250),
-                curve: Curves.easeOut);
+          if (currentIdx < pages.length - 1 && pageCtrl.hasClients) {
+            if (appSettings.usePageAnimation) {
+              pageCtrl.nextPage(duration: const Duration(milliseconds: 250), curve: Curves.easeOut);
+            } else {
+              pageCtrl.jumpToPage((pageCtrl.page ?? 0).round() + 1);
+            }
           }
         }
       }
@@ -1276,6 +1284,26 @@ class _SettingsSheet extends ConsumerWidget {
             ),
           ),
           
+          // Page Animation
+          _Row(
+            label: '화면 전환',
+            colors: colors,
+            child: Row(
+              children: [
+                Switch(
+                  value: ref.watch(appSettingsProvider).usePageAnimation,
+                  activeColor: Colors.blue,
+                  onChanged: (val) => ref.read(appSettingsProvider.notifier).updatePageAnimation(val),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  ref.watch(appSettingsProvider).usePageAnimation ? '애니메이션 켜짐' : '즉시 전환 (애니메이션 끔)',
+                  style: TextStyle(color: colors.text.withOpacity(0.5), fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+
           const SizedBox(height: 18),
           
           // Two-Page Mode
@@ -1426,12 +1454,16 @@ class _Row extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         SizedBox(
           width: 70,
-          child: Text(
-            label,
-            style: TextStyle(color: colors.text, fontWeight: FontWeight.w600),
+          child: Padding(
+            padding: const EdgeInsets.only(top: 8.0),
+            child: Text(
+              label,
+              style: TextStyle(color: colors.text, fontWeight: FontWeight.w600),
+            ),
           ),
         ),
         Expanded(child: child),
