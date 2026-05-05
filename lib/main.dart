@@ -35,19 +35,29 @@ void main() async {
   );
 }
 
-class MoonViewerApp extends StatelessWidget {
+class MoonViewerApp extends ConsumerWidget {
   const MoonViewerApp({super.key});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     debugPrint('App: Building MoonViewerApp...');
+    final settings = ref.watch(appSettingsProvider);
+    
     return MaterialApp(
       title: 'MoonViewer',
       debugShowCheckedModeBanner: false,
+      themeMode: settings.isDarkMode ? ThemeMode.dark : ThemeMode.light,
       theme: ThemeData(
-        useMaterial3: false, // Disabled for stability
+        useMaterial3: false,
         primaryColor: const Color(0xFF6B4E3D),
         scaffoldBackgroundColor: const Color(0xFFF5F5F0),
+        brightness: Brightness.light,
+      ),
+      darkTheme: ThemeData(
+        useMaterial3: false,
+        brightness: Brightness.dark,
+        primaryColor: const Color(0xFF6B4E3D),
+        scaffoldBackgroundColor: const Color(0xFF121212),
       ),
       home: const LibraryScreen(),
     );

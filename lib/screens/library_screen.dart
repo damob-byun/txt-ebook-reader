@@ -30,8 +30,10 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
   }
 
   void _showCloudSelection(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     showModalBottomSheet(
       context: context,
+      backgroundColor: isDark ? const Color(0xFF1E1E1E) : Colors.white,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
@@ -41,16 +43,20 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
               child: Text(
                 '클라우드 서비스 선택',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                style: TextStyle(
+                  fontSize: 18, 
+                  fontWeight: FontWeight.bold,
+                  color: isDark ? Colors.white : Colors.black87,
+                ),
               ),
             ),
             ListTile(
               leading: const Icon(Icons.dns_outlined, color: Colors.blue),
-              title: const Text('WebDAV'),
+              title: Text('WebDAV', style: TextStyle(color: isDark ? Colors.white70 : Colors.black87)),
               subtitle: const Text('개인 NAS 또는 서버 연결'),
               onTap: () {
                 Navigator.pop(context);
@@ -68,13 +74,13 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
             ),
             ListTile(
               leading: const Icon(Icons.add_to_drive, color: Colors.green),
-              title: const Text('Google Drive'),
+              title: Text('Google Drive', style: TextStyle(color: isDark ? Colors.white70 : Colors.black87)),
               subtitle: const Text('준비 중입니다'),
               enabled: false,
             ),
             ListTile(
               leading: const Icon(Icons.cloud_outlined, color: Colors.blueAccent),
-              title: const Text('Dropbox'),
+              title: Text('Dropbox', style: TextStyle(color: isDark ? Colors.white70 : Colors.black87)),
               subtitle: const Text('준비 중입니다'),
               enabled: false,
             ),
@@ -91,35 +97,39 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
     final filteredBooks = _searchQuery.isEmpty
         ? books
         : books.where((b) => b.title.toLowerCase().contains(_searchQuery.toLowerCase())).toList();
+    final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F5F0),
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
         title: _isSearching
             ? TextField(
                 controller: _searchController,
                 autofocus: true,
-                decoration: const InputDecoration(
-                  hintText: '제목 검색...',
+                style: TextStyle(color: isDark ? Colors.white : Colors.black87),
+                decoration: InputDecoration(
+                  hintText: '책 제목 검색...',
+                  hintStyle: TextStyle(color: isDark ? Colors.white60 : Colors.black54),
                   border: InputBorder.none,
                 ),
-                onChanged: (v) => setState(() => _searchQuery = v),
+                onChanged: (val) => setState(() => _searchQuery = val),
               )
-            : const Text('MoonViewer'),
+            : Text(
+                'MoonViewer',
+                style: TextStyle(
+                  color: isDark ? Colors.white : Colors.black87,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 1.2,
+                ),
+              ),
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        iconTheme: IconThemeData(color: isDark ? Colors.white : Colors.black87),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.settings_outlined),
-            onPressed: () {
-              Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const SettingsScreen()),
-              );
-            },
-          ),
           IconButton(
             icon: Icon(_isSearching ? Icons.close : Icons.search),
             onPressed: () {
               setState(() {
-                _isSearching = !_isSearching;
                 if (!_isSearching) {
                   _searchQuery = '';
                   _searchController.clear();
@@ -134,15 +144,15 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
         ],
       ),
       body: books.isEmpty 
-          ? _buildEmptyState(context) 
+          ? _buildEmptyState(context, isDark) 
           : ListView(
               padding: EdgeInsets.zero,
               children: [
                 if (!_isSearching) ...[
-                  _buildSectionTitle('최근 읽은 책'),
+                  _buildSectionTitle('최근 읽은 책', isDark),
                   _buildRecentList(books.take(5).toList()),
                   _buildFilePickerCard(context),
-                  _buildSectionTitle('전체 책장'),
+                  _buildSectionTitle('전체 책장', isDark),
                 ],
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
@@ -167,7 +177,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
     );
   }
 
-  Widget _buildSectionTitle(String title) {
+  Widget _buildSectionTitle(String title, bool isDark) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 20, 20, 10),
       child: Text(
@@ -175,7 +185,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
         style: TextStyle(
           fontSize: 16,
           fontWeight: FontWeight.bold,
-          color: Colors.brown[800],
+          color: isDark ? Colors.brown[200] : Colors.brown[800],
         ),
       ),
     );
@@ -288,16 +298,16 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
     }
   }
 
-  Widget _buildEmptyState(BuildContext context) {
+  Widget _buildEmptyState(BuildContext context, bool isDark) {
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.library_books_outlined, size: 60, color: Colors.brown[200]),
+          Icon(Icons.library_books_outlined, size: 60, color: isDark ? Colors.brown[300] : Colors.brown[200]),
           const SizedBox(height: 20),
-          const Text(
+          Text(
             '책장이 비어있습니다.',
-            style: TextStyle(fontSize: 16, color: Colors.brown),
+            style: TextStyle(fontSize: 16, color: isDark ? Colors.brown[100] : Colors.brown),
           ),
           const SizedBox(height: 15),
           ElevatedButton.icon(
@@ -305,7 +315,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
             icon: const Icon(Icons.folder_open),
             label: const Text('기기에서 탐색하기'),
             style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF4A6572),
+              backgroundColor: isDark ? const Color(0xFF6B4E3D) : const Color(0xFF4A6572),
               foregroundColor: Colors.white,
             ),
           ),
@@ -318,7 +328,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
             icon: const Icon(Icons.cloud_download, size: 16),
             label: const Text('WebDAV 가기'),
             style: TextButton.styleFrom(
-              foregroundColor: Colors.brown,
+              foregroundColor: isDark ? Colors.brown[200] : Colors.brown,
             ),
           ),
         ],
@@ -326,16 +336,16 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
     );
   }
 
-  Widget _buildNoResultsState() {
+  Widget _buildNoResultsState(bool isDark) {
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.search_off, size: 60, color: Colors.brown[200]),
+          Icon(Icons.search_off, size: 60, color: isDark ? Colors.white24 : Colors.brown[200]),
           const SizedBox(height: 15),
-          const Text(
+          Text(
             '검색 결과가 없습니다.',
-            style: TextStyle(color: Colors.brown),
+            style: TextStyle(color: isDark ? Colors.white54 : Colors.brown),
           ),
         ],
       ),
@@ -354,6 +364,7 @@ class _BookItem extends ConsumerWidget {
     final progress = book.totalBytes > 0 
         ? ((book.lastOffset) / book.totalBytes * 100).toInt() 
         : 0;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return GestureDetector(
       onTap: () {
@@ -368,16 +379,16 @@ class _BookItem extends ConsumerWidget {
           Expanded(
             child: Container(
               decoration: BoxDecoration(
-                color: Colors.white,
+                color: isDark ? const Color(0xFF2C2C2C) : Colors.white,
                 borderRadius: BorderRadius.circular(8),
                 boxShadow: [
                   BoxShadow(
-                    color: Colors.black.withOpacity(0.05),
+                    color: Colors.black.withOpacity(isDark ? 0.3 : 0.05),
                     blurRadius: 4,
                     offset: const Offset(1, 1),
                   ),
                 ],
-                border: Border.all(color: Colors.brown[100]!, width: 0.5),
+                border: Border.all(color: isDark ? Colors.white12 : Colors.brown[100]!, width: 0.5),
               ),
               child: Stack(
                 children: [
@@ -390,7 +401,7 @@ class _BookItem extends ConsumerWidget {
                         style: TextStyle(
                           fontSize: isSmall ? 9 : 10,
                           fontWeight: FontWeight.bold,
-                          color: Colors.brown[800],
+                          color: isDark ? Colors.white70 : Colors.brown[800],
                           fontFamily: 'Georgia',
                         ),
                         maxLines: 4,
@@ -404,11 +415,11 @@ class _BookItem extends ConsumerWidget {
                     right: 0,
                     child: Container(
                       height: 2,
-                      color: Colors.brown[50],
+                      color: isDark ? Colors.white10 : Colors.brown[50],
                       alignment: Alignment.centerLeft,
                       child: FractionallySizedBox(
                         widthFactor: (progress / 100).clamp(0.0, 1.0),
-                        child: Container(color: Colors.brown[400]),
+                        child: Container(color: isDark ? Colors.amber[700] : Colors.brown[400]),
                       ),
                     ),
                   ),
@@ -422,7 +433,7 @@ class _BookItem extends ConsumerWidget {
             style: TextStyle(
               fontSize: isSmall ? 9 : 10,
               fontWeight: FontWeight.w500,
-              color: Colors.brown[900],
+              color: isDark ? Colors.white60 : Colors.brown[900],
             ),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,

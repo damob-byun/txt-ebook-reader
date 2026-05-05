@@ -112,21 +112,22 @@ class _WebDavBrowserScreenState extends ConsumerState<WebDavBrowserScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F5F0),
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
         title: _isSearching 
-          ? _buildSearchField() 
-          : Text(_currentPath, style: const TextStyle(fontSize: 14, color: Colors.black87)),
+          ? _buildSearchField(isDark) 
+          : Text(_currentPath, style: TextStyle(fontSize: 14, color: isDark ? Colors.white : Colors.black87)),
         backgroundColor: Colors.transparent,
         elevation: 0,
-        iconTheme: const IconThemeData(color: Colors.black87),
+        iconTheme: IconThemeData(color: isDark ? Colors.white : Colors.black87),
         leading: _isSearching 
           ? null 
           : _currentPath != '/' ? IconButton(
           icon: const Icon(Icons.arrow_back),
           onPressed: () {
-            // Simple up directory logic
             final parts = _currentPath.split('/');
             parts.removeLast();
             setState(() => _currentPath = parts.join('/') == '' ? '/' : parts.join('/'));
@@ -156,13 +157,13 @@ class _WebDavBrowserScreenState extends ConsumerState<WebDavBrowserScreen> {
       body: _isLoading
           ? const Center(child: CircularProgressIndicator(color: Color(0xFF6B4E3D)))
           : _errorMessage != null
-              ? _buildErrorPlaceholder()
+              ? _buildErrorPlaceholder(isDark)
               : _filteredFiles.isEmpty
-                  ? _buildEmptyPlaceholder()
+                  ? _buildEmptyPlaceholder(isDark)
                   : ListView.separated(
                       padding: const EdgeInsets.symmetric(vertical: 10),
                       itemCount: _filteredFiles.length,
-                      separatorBuilder: (_, __) => const Divider(height: 1, indent: 70),
+                      separatorBuilder: (_, __) => Divider(height: 1, indent: 70, color: isDark ? Colors.white10 : Colors.black12),
                       itemBuilder: (context, index) {
                         final file = _filteredFiles[index];
                         final isDir = file.isDir ?? false;
@@ -172,7 +173,9 @@ class _WebDavBrowserScreenState extends ConsumerState<WebDavBrowserScreen> {
                           leading: Container(
                             padding: const EdgeInsets.all(10),
                             decoration: BoxDecoration(
-                              color: isDir ? Colors.amber.withOpacity(0.1) : Colors.blue.withOpacity(0.1),
+                              color: isDir 
+                                  ? (isDark ? Colors.amber.withOpacity(0.05) : Colors.amber.withOpacity(0.1)) 
+                                  : (isDark ? Colors.blue.withOpacity(0.05) : Colors.blue.withOpacity(0.1)),
                               borderRadius: BorderRadius.circular(10),
                             ),
                             child: Icon(
@@ -182,12 +185,15 @@ class _WebDavBrowserScreenState extends ConsumerState<WebDavBrowserScreen> {
                           ),
                           title: Text(
                             file.name ?? 'Unknown',
-                            style: const TextStyle(fontWeight: FontWeight.w500),
+                            style: TextStyle(fontWeight: FontWeight.w500, color: isDark ? Colors.white70 : Colors.black87),
                           ),
                           subtitle: isDir 
-                              ? const Text('폴더', style: TextStyle(fontSize: 12))
-                              : Text('${( (file.size ?? 0) / 1024).toStringAsFixed(1)} KB', style: const TextStyle(fontSize: 12)),
-                          trailing: isDir ? const Icon(Icons.chevron_right) : const Icon(Icons.download_rounded),
+                              ? Text('폴더', style: TextStyle(fontSize: 12, color: isDark ? Colors.white38 : Colors.black54))
+                              : Text('${( (file.size ?? 0) / 1024).toStringAsFixed(1)} KB', style: TextStyle(fontSize: 12, color: isDark ? Colors.white38 : Colors.black54)),
+                          trailing: Icon(
+                            isDir ? Icons.chevron_right : Icons.download_rounded,
+                            color: isDark ? Colors.white30 : Colors.black26,
+                          ),
                           onTap: () {
                             if (isDir) {
                               setState(() => _currentPath = file.path!);
@@ -202,34 +208,34 @@ class _WebDavBrowserScreenState extends ConsumerState<WebDavBrowserScreen> {
     );
   }
 
-  Widget _buildSearchField() {
+  Widget _buildSearchField(bool isDark) {
     return TextField(
       controller: _searchController,
       autofocus: true,
-      decoration: const InputDecoration(
+      decoration: InputDecoration(
         hintText: '파일 또는 폴더 검색...',
         border: InputBorder.none,
-        hintStyle: TextStyle(color: Colors.black45, fontSize: 14),
+        hintStyle: TextStyle(color: isDark ? Colors.white30 : Colors.black45, fontSize: 14),
       ),
-      style: const TextStyle(color: Colors.black87, fontSize: 14),
+      style: TextStyle(color: isDark ? Colors.white : Colors.black87, fontSize: 14),
     );
   }
 
-  Widget _buildErrorPlaceholder() {
+  Widget _buildErrorPlaceholder(bool isDark) {
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           const Icon(Icons.error_outline, size: 60, color: Colors.redAccent),
           const SizedBox(height: 20),
-          Text(_errorMessage!, textAlign: TextAlign.center),
+          Text(_errorMessage!, textAlign: TextAlign.center, style: TextStyle(color: isDark ? Colors.white70 : Colors.black87)),
           TextButton(onPressed: _loadFiles, child: const Text('다시 시도'))
         ],
       ),
     );
   }
 
-  Widget _buildEmptyPlaceholder() {
+  Widget _buildEmptyPlaceholder(bool isDark) {
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -237,12 +243,12 @@ class _WebDavBrowserScreenState extends ConsumerState<WebDavBrowserScreen> {
           Icon(
             _isSearching ? Icons.search_off : Icons.folder_open,
             size: 60,
-            color: Colors.brown[200],
+            color: isDark ? Colors.white10 : Colors.brown[200],
           ),
           const SizedBox(height: 20),
           Text(
             _isSearching ? '검색 결과가 없습니다.' : '파일이 없습니다.',
-            style: const TextStyle(color: Colors.brown),
+            style: TextStyle(color: isDark ? Colors.white38 : Colors.brown),
           ),
         ],
       ),

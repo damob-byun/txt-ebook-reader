@@ -11,17 +11,27 @@ class SettingsScreen extends ConsumerWidget {
     final settings = ref.watch(appSettingsProvider);
     final notifier = ref.read(appSettingsProvider.notifier);
 
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F5F0),
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
-        title: const Text('설정', style: TextStyle(color: Colors.black87)),
+        title: Text('설정', style: TextStyle(color: isDark ? Colors.white : Colors.black87)),
         backgroundColor: Colors.transparent,
         elevation: 0,
-        iconTheme: const IconThemeData(color: Colors.black87),
+        iconTheme: IconThemeData(color: isDark ? Colors.white : Colors.black87),
       ),
       body: ListView(
         children: [
-          _buildSectionHeader('장치 및 입력'),
+          _buildSectionHeader('테마 설정', isDark),
+          _buildSwitchTile(
+            title: '다크 모드',
+            subtitle: '앱 전체 테마를 어둡게 설정',
+            value: settings.isDarkMode,
+            onChanged: notifier.updateDarkMode,
+          ),
+
+          _buildSectionHeader('장치 및 입력', isDark),
           _buildSwitchTile(
             title: '화면 터치로 페이지 넘기기',
             subtitle: '화면 양쪽 가장자리를 터치하여 페이지 이동',
@@ -29,7 +39,7 @@ class SettingsScreen extends ConsumerWidget {
             onChanged: notifier.updateTouchTurn,
           ),
           
-          _buildSectionHeader('보기 모드'),
+          _buildSectionHeader('보기 모드', isDark),
           _buildSwitchTile(
             title: '세로 연속 스크롤 모드',
             subtitle: '페이지 구분 없이 아래로 계속 읽기',
@@ -37,9 +47,9 @@ class SettingsScreen extends ConsumerWidget {
             onChanged: notifier.updateScrollMode,
           ),
 
-          _buildSectionHeader('계정 관리'),
+          _buildSectionHeader('계정 관리', isDark),
           ListTile(
-            title: const Text('WebDAV 계정 설정'),
+            title: Text('WebDAV 계정 설정', style: TextStyle(color: isDark ? Colors.white : Colors.black87)),
             subtitle: const Text('서버 주소 및 자격증명 수정'),
             trailing: const Icon(Icons.chevron_right),
             onTap: () {
@@ -61,15 +71,15 @@ class SettingsScreen extends ConsumerWidget {
     );
   }
 
-  Widget _buildSectionHeader(String title) {
+  Widget _buildSectionHeader(String title, bool isDark) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 24, 16, 8),
       child: Text(
         title,
-        style: const TextStyle(
+        style: TextStyle(
           fontSize: 13,
           fontWeight: FontWeight.bold,
-          color: Color(0xFF6B4E3D),
+          color: isDark ? Colors.brown[200] : const Color(0xFF6B4E3D),
           letterSpacing: 1.2,
         ),
       ),

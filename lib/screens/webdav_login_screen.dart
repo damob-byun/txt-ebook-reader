@@ -62,13 +62,15 @@ class _WebDavLoginScreenState extends ConsumerState<WebDavLoginScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F5F0),
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
-        title: const Text('WebDAV 설정', style: TextStyle(color: Colors.black87)),
+        title: Text('WebDAV 설정', style: TextStyle(color: isDark ? Colors.white : Colors.black87)),
         backgroundColor: Colors.transparent,
         elevation: 0,
-        iconTheme: const IconThemeData(color: Colors.black87),
+        iconTheme: IconThemeData(color: isDark ? Colors.white : Colors.black87),
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(24.0),
@@ -77,9 +79,13 @@ class _WebDavLoginScreenState extends ConsumerState<WebDavLoginScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const Text(
+              Text(
                 '서버 정보를 입력하세요',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF6B4E3D)),
+                style: TextStyle(
+                  fontSize: 18, 
+                  fontWeight: FontWeight.bold, 
+                  color: isDark ? Colors.brown[200] : const Color(0xFF6B4E3D)
+                ),
               ),
               const SizedBox(height: 24),
               _buildTextField(
@@ -87,6 +93,7 @@ class _WebDavLoginScreenState extends ConsumerState<WebDavLoginScreen> {
                 label: '서버 주소 (Host)',
                 hint: 'example.com 또는 IP 주소',
                 icon: Icons.dns_outlined,
+                isDark: isDark,
               ),
               const SizedBox(height: 16),
               Row(
@@ -97,13 +104,14 @@ class _WebDavLoginScreenState extends ConsumerState<WebDavLoginScreen> {
                       controller: _portController,
                       label: '포트 (Port)',
                       keyboardType: TextInputType.number,
+                      isDark: isDark,
                     ),
                   ),
                   const SizedBox(width: 16),
                   Expanded(
                     flex: 3,
                     child: SwitchListTile(
-                      title: const Text('HTTPS 사용', style: TextStyle(fontSize: 14)),
+                      title: Text('HTTPS 사용', style: TextStyle(fontSize: 14, color: isDark ? Colors.white70 : Colors.black87)),
                       value: _useHttps,
                       onChanged: (v) => setState(() => _useHttps = v),
                       activeColor: const Color(0xFF6B4E3D),
@@ -117,6 +125,7 @@ class _WebDavLoginScreenState extends ConsumerState<WebDavLoginScreen> {
                 controller: _userController,
                 label: '사용자 아이디 (User)',
                 icon: Icons.person_outline,
+                isDark: isDark,
               ),
               const SizedBox(height: 16),
               _buildTextField(
@@ -124,6 +133,7 @@ class _WebDavLoginScreenState extends ConsumerState<WebDavLoginScreen> {
                 label: '비밀번호 (Password)',
                 obscureText: true,
                 icon: Icons.lock_outline,
+                isDark: isDark,
               ),
               const SizedBox(height: 40),
               ElevatedButton(
@@ -133,7 +143,7 @@ class _WebDavLoginScreenState extends ConsumerState<WebDavLoginScreen> {
                   padding: const EdgeInsets.symmetric(vertical: 16),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                 ),
-                child: const Text('저장 및 연결하기', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                child: const Text('저장 및 연결하기', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
               ),
             ],
           ),
@@ -149,18 +159,29 @@ class _WebDavLoginScreenState extends ConsumerState<WebDavLoginScreen> {
     IconData? icon,
     bool obscureText = false,
     TextInputType? keyboardType,
+    required bool isDark,
   }) {
     return TextFormField(
       controller: controller,
       obscureText: obscureText,
       keyboardType: keyboardType,
+      style: TextStyle(color: isDark ? Colors.white : Colors.black87),
       decoration: InputDecoration(
         labelText: label,
+        labelStyle: TextStyle(color: isDark ? Colors.white60 : Colors.black54),
         hintText: hint,
-        prefixIcon: icon != null ? Icon(icon, color: const Color(0xFF6B4E3D)) : null,
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+        hintStyle: TextStyle(color: isDark ? Colors.white24 : Colors.black26),
+        prefixIcon: icon != null ? Icon(icon, color: isDark ? Colors.brown[200] : const Color(0xFF6B4E3D)) : null,
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: isDark ? const BorderSide(color: Colors.white12) : const BorderSide(),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: isDark ? const BorderSide(color: Colors.white10) : const BorderSide(color: Colors.black12),
+        ),
         filled: true,
-        fillColor: Colors.white,
+        fillColor: isDark ? Colors.white.withOpacity(0.05) : Colors.white,
       ),
       validator: (v) => v == null || v.isEmpty ? '필수 입력 항목입니다.' : null,
     );

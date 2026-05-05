@@ -44,4 +44,9 @@ class AppSettingsNotifier extends StateNotifier<AppSettings> {
     state = state.copyWith(usePageAnimation: val);
     await _prefs.setString(_key, jsonEncode(state.toJson()));
   }
+
+  Future<void> updateDarkMode(bool val) async {
+    state = state.copyWith(isDarkMode: val);
+    await _prefs.setString(_key, jsonEncode(state.toJson()));
+  }
 }

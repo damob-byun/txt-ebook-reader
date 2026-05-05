@@ -1674,11 +1674,13 @@ class _SearchSheetState extends State<_SearchSheet> {
   @override
   Widget build(BuildContext context) {
     final mq = MediaQuery.of(context);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
     return Container(
       height: mq.size.height * 0.8,
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.only(
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+        borderRadius: const BorderRadius.only(
           topLeft: Radius.circular(20),
           topRight: Radius.circular(20),
         ),
@@ -1693,11 +1695,16 @@ class _SearchSheetState extends State<_SearchSheet> {
         children: [
           Row(
             children: [
-              const Text('본문 검색',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              Text('본문 검색',
+                  style: TextStyle(
+                    fontSize: 18, 
+                    fontWeight: FontWeight.bold,
+                    color: isDark ? Colors.white : Colors.black87,
+                  )),
               const Spacer(),
               IconButton(
                 icon: const Icon(Icons.close),
+                color: isDark ? Colors.white70 : Colors.black54,
                 onPressed: () => Navigator.pop(context),
               ),
             ],
@@ -1706,17 +1713,20 @@ class _SearchSheetState extends State<_SearchSheet> {
           TextField(
             controller: _searchCtrl,
             autofocus: true,
+            style: TextStyle(color: isDark ? Colors.white : Colors.black87),
             decoration: InputDecoration(
               hintText: '검색어를 입력하세요',
-              prefixIcon: const Icon(Icons.search),
+              hintStyle: TextStyle(color: isDark ? Colors.white54 : Colors.black54),
+              prefixIcon: Icon(Icons.search, color: isDark ? Colors.white70 : Colors.black54),
               filled: true,
-              fillColor: Colors.grey[100],
+              fillColor: isDark ? Colors.white10 : Colors.grey[100],
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
                 borderSide: BorderSide.none,
               ),
               suffixIcon: IconButton(
                 icon: const Icon(Icons.send),
+                color: isDark ? Colors.amber[700] : const Color(0xFF6B4E3D),
                 onPressed: () => _performSearch(_searchCtrl.text),
               ),
             ),
@@ -1737,8 +1747,8 @@ class _SearchSheetState extends State<_SearchSheet> {
                 String pct = widget.totalBytes > 0 ? (r.byteOffset / widget.totalBytes * 100).toStringAsFixed(1) : '0.0';
                 
                 return ListTile(
-                  title: Text(r.snippet, style: const TextStyle(fontSize: 13)),
-                  subtitle: Text('약 $estimatedPage 페이지 부근 ($pct%)', style: TextStyle(fontSize: 11, color: Colors.grey)),
+                  title: Text(r.snippet, style: TextStyle(fontSize: 13, color: isDark ? Colors.white70 : Colors.black87)),
+                  subtitle: Text('약 $estimatedPage 페이지 부근 ($pct%)', style: TextStyle(fontSize: 11, color: isDark ? Colors.white38 : Colors.grey)),
                   onTap: () {
                     Navigator.pop(context);
                     widget.onHighlight(_searchCtrl.text);
