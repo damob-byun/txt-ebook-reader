@@ -10,7 +10,7 @@ import '../providers/library_provider.dart';
 import '../services/reader_engine.dart';
 import '../providers/app_settings_provider.dart';
 import '../models/app_settings.dart';
-import 'package:perfect_volume_control/perfect_volume_control.dart';
+import 'package:flutter/services.dart';
 
 // ---------------------------------------------------------------------------
 // Theme helpers
@@ -48,17 +48,42 @@ class ReaderScreen extends HookConsumerWidget {
   final Book book;
   const ReaderScreen({super.key, required this.book});
 
-  Widget _buildPage(ReaderPage page, ReaderSettings settings, _TC colors, TextStyle style) {
+  Widget _buildPage(ReaderPage page, ReaderSettings settings, _TC colors, TextStyle style, String? highlight) {
+    Widget content;
+    if (highlight != null && highlight.isNotEmpty && page.content.contains(highlight)) {
+      final spans = <TextSpan>[];
+      final parts = page.content.split(highlight);
+      for (int i = 0; i < parts.length; i++) {
+        spans.add(TextSpan(text: parts[i]));
+        if (i < parts.length - 1) {
+          spans.add(TextSpan(
+            text: highlight,
+            style: TextStyle(
+              backgroundColor: Colors.yellow.withOpacity(0.5),
+              color: Colors.black,
+              fontWeight: FontWeight.bold,
+            ),
+          ));
+        }
+      }
+      content = Text.rich(
+        TextSpan(children: spans, style: style.copyWith(color: colors.text)),
+        textAlign: TextAlign.justify,
+      );
+    } else {
+      content = Text(
+        page.content,
+        style: style.copyWith(color: colors.text),
+        textAlign: TextAlign.justify,
+      );
+    }
+
     return Padding(
       padding: EdgeInsets.symmetric(
         horizontal: settings.horizontalPadding,
         vertical: settings.verticalPadding,
       ),
-      child: Text(
-        page.content,
-        style: style.copyWith(color: colors.text),
-        textAlign: TextAlign.justify,
-      ),
+      child: content,
     );
   }
 
@@ -93,6 +118,7 @@ class ReaderScreen extends HookConsumerWidget {
     final jumpTimer = useRef<Timer?>(null);
     final curIdxRef = useRef(0);
     final lastSafePagesRef = useRef<List<ReaderPage>>([]);
+    final highlightQuery = useState<String?>(null);
 
     // Automatic Two-Page Mode detection (First time only)
     useEffect(() {
@@ -142,6 +168,15 @@ class ReaderScreen extends HookConsumerWidget {
           try {
             final fileSz = await ReaderEngine.fileSize(book.path!);
             totalBytes.value = fileSz;
+
+            // Clamp current reading position to the actual file size
+            if (readByte.value >= fileSz && fileSz > 0) {
+              readByte.value = fileSz - 1;
+            } else if (fileSz == 0) {
+              readByte.value = 0;
+            }
+            
+            final targetByte = readByte.value;
 
             final chunkStart = fileSz > 0
                 ? (targetByte ~/ ReaderEngine.chunkBytes) *
@@ -271,63 +306,6 @@ class ReaderScreen extends HookConsumerWidget {
         }
       }
     }
-
-    // -----------------------------------------------------------------------
-    // Volume Buttons Listener
-    // -----------------------------------------------------------------------
-    useEffect(() {
-      if (!appSettings.useVolumeKeys) return null;
-
-      bool isDisposed = false;
-      StreamSubscription<double>? subscription;
-      double lastVolume = -1.0; // Force first event to trigger
-      bool isResetting = false;
-      
-      void startListening() async {
-        try {
-          // Initial delay to avoid conflicts during screen transition
-          await Future.delayed(const Duration(milliseconds: 600));
-          if (isDisposed) return;
-
-          PerfectVolumeControl.hideUI = true;
-          lastVolume = await PerfectVolumeControl.getVolume();
-
-          subscription = PerfectVolumeControl.stream.listen((volume) async {
-            if (isDisposed || isResetting) return;
-            
-            // Ignore tiny fluctuations (noise)
-            if (lastVolume != -1.0 && (volume - lastVolume).abs() < 0.001) return;
-
-            final isUp = volume > lastVolume;
-            lastVolume = volume;
-
-            triggerPageTurn(!isUp); // isUp means Volume Up, which is previous page (isNext = false)
-
-            // Hack: Reset volume if it gets too close to the edges to allow infinite scrolling
-            // We use a wider margin to be safe and ensure the system UI doesn't pop up
-            if (volume <= 0.15 || volume >= 0.85) {
-              isResetting = true;
-              await PerfectVolumeControl.setVolume(0.5);
-              lastVolume = 0.5;
-              // Small delay to let the system stabilize after programmatic volume change
-              await Future.delayed(const Duration(milliseconds: 300));
-              isResetting = false;
-            }
-          });
-        } catch (e) {
-          debugPrint('ReaderScreen: PerfectVolumeControl initialization failed: $e');
-        }
-      }
-
-      startListening();
-
-      return () {
-        isDisposed = true;
-        subscription?.cancel();
-        // Restore system UI on exit
-        PerfectVolumeControl.hideUI = false;
-      };
-    }, [appSettings.useVolumeKeys]);
 
     // -----------------------------------------------------------------------
     // Load next chunk
@@ -461,6 +439,7 @@ class ReaderScreen extends HookConsumerWidget {
               lastOffset: page.byteStart,
               lastRead: DateTime.now(),
               totalPages: estimated,
+              totalBytes: totalBytes.value,
             ),
           );
 
@@ -471,6 +450,11 @@ class ReaderScreen extends HookConsumerWidget {
     // UI
     // -----------------------------------------------------------------------
     final progress = totalBytes.value > 0 ? (sliderVal.value * 100).toStringAsFixed(2) : '0.00';
+
+    final pages = allPages.value;
+    final estimatedTotalPages = loadedEnd.value > 0 && pages.isNotEmpty
+        ? (totalBytes.value * pages.length ~/ loadedEnd.value)
+        : 0;
 
     final isBookmarked =
         safePages.isNotEmpty &&
@@ -506,8 +490,33 @@ class ReaderScreen extends HookConsumerWidget {
                       style: TextStyle(color: colors.text),
                     ),
                   )
-                : GestureDetector(
-                    onTapUp: (d) {
+                : Focus(
+                    autofocus: true,
+                    onKeyEvent: (node, event) {
+                      if (!(ModalRoute.of(context)?.isCurrent ?? true)) return KeyEventResult.ignored;
+                      if (event is KeyDownEvent) {
+                        final key = event.logicalKey;
+                        if (key == LogicalKeyboardKey.arrowRight || 
+                            key == LogicalKeyboardKey.space || 
+                            key == LogicalKeyboardKey.pageDown || 
+                            key == LogicalKeyboardKey.arrowDown) {
+                          triggerPageTurn(true);
+                          return KeyEventResult.handled;
+                        } else if (key == LogicalKeyboardKey.arrowLeft || 
+                                   key == LogicalKeyboardKey.pageUp || 
+                                   key == LogicalKeyboardKey.arrowUp) {
+                          triggerPageTurn(false);
+                          return KeyEventResult.handled;
+                        } else if (key == LogicalKeyboardKey.enter || 
+                                   key == LogicalKeyboardKey.escape) {
+                          showOverlay.value = !showOverlay.value;
+                          return KeyEventResult.handled;
+                        }
+                      }
+                      return KeyEventResult.ignored;
+                    },
+                    child: GestureDetector(
+                      onTapUp: (d) {
                       if (!appSettings.useTouchTurn) {
                         // Only allow center tap for overlay
                         showOverlay.value = !showOverlay.value;
@@ -591,9 +600,9 @@ class ReaderScreen extends HookConsumerWidget {
                                 height: safeAreaH,
                                 child: Row(
                                   children: [
-                                    Expanded(child: _buildPage(safePages[leftIdx], settings, colors, style)),
+                                    Expanded(child: _buildPage(safePages[leftIdx], settings, colors, style, highlightQuery.value)),
                                     const VerticalDivider(width: 1, thickness: 0.1, color: Colors.black12),
-                                    Expanded(child: rightIdx < safePages.length ? _buildPage(safePages[rightIdx], settings, colors, style) : Container()),
+                                    Expanded(child: rightIdx < safePages.length ? _buildPage(safePages[rightIdx], settings, colors, style, highlightQuery.value) : Container()),
                                   ],
                                 ),
                               );
@@ -603,7 +612,7 @@ class ReaderScreen extends HookConsumerWidget {
                             }
                             return SizedBox(
                               height: safeAreaH,
-                              child: _buildPage(safePages[i], settings, colors, style),
+                              child: _buildPage(safePages[i], settings, colors, style, highlightQuery.value),
                             );
                           },
                         ),
@@ -628,12 +637,12 @@ class ReaderScreen extends HookConsumerWidget {
                           return Row(
                             children: [
                               Expanded(
-                                child: _buildPage(safePages[leftIdx], settings, colors, style),
+                                child: _buildPage(safePages[leftIdx], settings, colors, style, highlightQuery.value),
                               ),
                               const VerticalDivider(width: 1, thickness: 0.1, color: Colors.black12),
                               Expanded(
                                 child: rightIdx < safePages.length 
-                                  ? _buildPage(safePages[rightIdx], settings, colors, style)
+                                  ? _buildPage(safePages[rightIdx], settings, colors, style, highlightQuery.value)
                                   : Container(),
                               ),
                             ],
@@ -649,10 +658,11 @@ class ReaderScreen extends HookConsumerWidget {
                             ),
                           );
                         }
-                        return _buildPage(safePages[i], settings, colors, style);
+                        return _buildPage(safePages[i], settings, colors, style, highlightQuery.value);
                       },
                     ),
                   ),
+                ),
           ),
 
           // ---- Bottom Footer (Progress & Time) ----
@@ -660,7 +670,12 @@ class ReaderScreen extends HookConsumerWidget {
             bottom: mq.padding.bottom + 5,
             left: 0,
             right: 0,
-            child: _ReaderFooter(progress: progress, colors: colors),
+            child: _ReaderFooter(
+              progress: progress, 
+              colors: colors,
+              currentPage: pageIdx.value + 1,
+              totalPages: estimatedTotalPages,
+            ),
           ),
 
           // ---- Overlay ----
@@ -681,6 +696,8 @@ class ReaderScreen extends HookConsumerWidget {
               showOverlay: showOverlay,
               isBookmarked: isBookmarked,
               pageCtrl: pageCtrl,
+              highlightQuery: highlightQuery,
+              loadedEnd: loadedEnd.value,
               onSettings: () {
                 showOverlay.value = false;
                 showModalBottomSheet(
@@ -716,6 +733,8 @@ class ReaderScreen extends HookConsumerWidget {
     required ValueNotifier<bool> showOverlay,
     required bool isBookmarked,
     required PageController pageCtrl,
+    required ValueNotifier<String?> highlightQuery,
+    required int loadedEnd,
     required VoidCallback onSettings,
     required VoidCallback onOpenDrawer,
     required Function(int) jumpToByte,
@@ -770,6 +789,7 @@ class ReaderScreen extends HookConsumerWidget {
                   if (val != 'bookmark_toggle') showOverlay.value = false;
                   
                   if (val == 'search') {
+                    final avg = safePages.isNotEmpty ? (loadedEnd / safePages.length) : 800.0;
                     showModalBottomSheet(
                       context: context,
                       isScrollControlled: true,
@@ -777,7 +797,10 @@ class ReaderScreen extends HookConsumerWidget {
                       builder: (_) => _SearchSheet(
                         book: latestBook,
                         encoding: settings.encoding,
+                        totalBytes: totalBytes,
+                        avgPageBytes: avg,
                         onJump: (offset) => jumpToByte(offset),
+                        onHighlight: (q) => highlightQuery.value = q,
                       ),
                     );
                   } else if (val == 'bookmark_list') {
@@ -793,9 +816,20 @@ class ReaderScreen extends HookConsumerWidget {
                     ref.read(libraryProvider.notifier).updateBook(latestBook.copyWith(bookmarks: bm));
                   } else if (val == 'settings') {
                     onSettings();
+                  } else if (val == 'clear_highlight') {
+                    highlightQuery.value = null;
                   }
                 },
                 itemBuilder: (context) => [
+                  if (highlightQuery.value != null)
+                    const PopupMenuItem(
+                      value: 'clear_highlight',
+                      child: ListTile(
+                        leading: Icon(Icons.highlight_off, color: Colors.white, size: 20),
+                        title: Text('하이라이트 해제', style: TextStyle(color: Colors.white, fontSize: 14)),
+                        dense: true,
+                      ),
+                    ),
                   const PopupMenuItem(
                     value: 'search',
                     child: ListTile(
@@ -1163,6 +1197,45 @@ class _SettingsSheet extends ConsumerWidget {
 
           const SizedBox(height: 18),
 
+          // Horizontal padding
+          _Row(
+            label: '좌우 여백',
+            colors: colors,
+            child: Row(
+              children: [
+                Text(
+                  s.horizontalPadding.toStringAsFixed(1),
+                  style: TextStyle(
+                    color: colors.text.withOpacity(0.7),
+                    fontSize: 12,
+                  ),
+                ),
+                Expanded(
+                  child: SliderTheme(
+                    data: SliderThemeData(
+                      thumbShape: const RoundSliderThumbShape(
+                        enabledThumbRadius: 6,
+                      ),
+                      trackHeight: 3,
+                      activeTrackColor: colors.text.withOpacity(0.6),
+                      inactiveTrackColor: colors.text.withOpacity(0.2),
+                      thumbColor: colors.text,
+                    ),
+                    child: Slider(
+                      value: s.horizontalPadding,
+                      min: 0.0,
+                      max: 60.0,
+                      divisions: 60,
+                      onChanged: (v) => n.updateHorizontalPadding(v),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 18),
+
           // Font family
           _Row(
             label: '글꼴',
@@ -1407,8 +1480,15 @@ class _ZoneBox extends StatelessWidget {
 class _ReaderFooter extends HookWidget {
   final String progress;
   final _TC colors;
+  final int currentPage;
+  final int totalPages;
 
-  const _ReaderFooter({required this.progress, required this.colors});
+  const _ReaderFooter({
+    required this.progress, 
+    required this.colors,
+    required this.currentPage,
+    required this.totalPages,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -1425,7 +1505,9 @@ class _ReaderFooter extends HookWidget {
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
       child: Center(
         child: Text(
-          '$progress%  ·  ${timeStr.value}',
+          totalPages > 0 
+            ? '$currentPage / $totalPages 쪽  ·  $progress%  ·  ${timeStr.value}'
+            : '$progress%  ·  ${timeStr.value}',
           style: TextStyle(
             fontSize: 10,
             color: colors.text.withOpacity(0.4),
@@ -1540,11 +1622,18 @@ class _Chip extends StatelessWidget {
 class _SearchSheet extends StatefulWidget {
   final Book book;
   final String encoding;
+  final int totalBytes;
+  final double avgPageBytes;
   final Function(int) onJump;
+  final Function(String) onHighlight;
+  
   const _SearchSheet({
     required this.book,
     required this.encoding,
+    required this.totalBytes,
+    required this.avgPageBytes,
     required this.onJump,
+    required this.onHighlight,
   });
 
   @override
@@ -1644,10 +1733,15 @@ class _SearchSheetState extends State<_SearchSheet> {
               itemCount: _results.length,
               itemBuilder: (context, i) {
                 final r = _results[i];
+                int estimatedPage = widget.avgPageBytes > 0 ? (r.byteOffset / widget.avgPageBytes).ceil() : 1;
+                String pct = widget.totalBytes > 0 ? (r.byteOffset / widget.totalBytes * 100).toStringAsFixed(1) : '0.0';
+                
                 return ListTile(
                   title: Text(r.snippet, style: const TextStyle(fontSize: 13)),
+                  subtitle: Text('약 $estimatedPage 페이지 부근 ($pct%)', style: TextStyle(fontSize: 11, color: Colors.grey)),
                   onTap: () {
                     Navigator.pop(context);
+                    widget.onHighlight(_searchCtrl.text);
                     widget.onJump(r.byteOffset);
                   },
                 );

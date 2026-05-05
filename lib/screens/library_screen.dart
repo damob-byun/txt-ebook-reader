@@ -351,8 +351,8 @@ class _BookItem extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final progress = book.totalPages > 0 
-        ? ((book.lastOffset + 1) / book.totalPages * 100).toInt() 
+    final progress = book.totalBytes > 0 
+        ? ((book.lastOffset) / book.totalBytes * 100).toInt() 
         : 0;
 
     return GestureDetector(

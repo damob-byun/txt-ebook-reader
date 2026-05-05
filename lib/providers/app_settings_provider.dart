@@ -25,11 +25,6 @@ class AppSettingsNotifier extends StateNotifier<AppSettings> {
     }
   }
 
-  Future<void> updateVolumeKeys(bool val) async {
-    state = state.copyWith(useVolumeKeys: val);
-    await _prefs.setString(_key, jsonEncode(state.toJson()));
-  }
-
   Future<void> updateTouchTurn(bool val) async {
     state = state.copyWith(useTouchTurn: val);
     await _prefs.setString(_key, jsonEncode(state.toJson()));

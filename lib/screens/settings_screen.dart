@@ -23,12 +23,6 @@ class SettingsScreen extends ConsumerWidget {
         children: [
           _buildSectionHeader('장치 및 입력'),
           _buildSwitchTile(
-            title: '볼륨 버튼으로 페이지 넘기기',
-            subtitle: '모바일 기기의 볼륨 키를 사용하여 이전/다음 페이지 이동',
-            value: settings.useVolumeKeys,
-            onChanged: notifier.updateVolumeKeys,
-          ),
-          _buildSwitchTile(
             title: '화면 터치로 페이지 넘기기',
             subtitle: '화면 양쪽 가장자리를 터치하여 페이지 이동',
             value: settings.useTouchTurn,

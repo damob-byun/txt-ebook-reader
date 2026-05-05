@@ -33,8 +33,30 @@ class LibraryNotifier extends StateNotifier<List<Book>> {
   }
 
   Future<void> addBook(Book book) async {
+    // Check if exact same book (ID) already exists
     if (state.any((b) => b.id == book.id)) return;
-    state = [book, ...state];
+
+    // Check if same TITLE exists (different file/path, same name)
+    final existingIndex = state.indexWhere((b) => b.title == book.title);
+
+    if (existingIndex != -1) {
+      final existing = state[existingIndex];
+      // Merge: Keep existing progress (lastOffset, bookmarks, totalBytes), 
+      // but update the path to the new one being added.
+      final merged = existing.copyWith(
+        path: book.path,
+        lastRead: DateTime.now(),
+      );
+      
+      // Replace existing with merged and move to top
+      state = [
+        merged,
+        ...state.where((b) => b.id != existing.id),
+      ];
+    } else {
+      state = [book, ...state];
+    }
+    
     await _storage.saveBooks(state);
   }
 

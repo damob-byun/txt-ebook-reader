@@ -9,6 +9,7 @@ class Book {
   final DateTime lastRead;
   final int lastOffset;
   final int totalPages;
+  final int totalBytes;
   final List<int> bookmarks;
   final String? coverUrl;
 
@@ -20,6 +21,7 @@ class Book {
     required this.lastRead,
     this.lastOffset = 0,
     this.totalPages = 0,
+    this.totalBytes = 0,
     this.bookmarks = const [],
     this.coverUrl,
   });
@@ -39,6 +41,7 @@ class Book {
     DateTime? lastRead,
     int? lastOffset,
     int? totalPages,
+    int? totalBytes,
     List<int>? bookmarks,
   }) {
     return Book(
@@ -49,6 +52,7 @@ class Book {
       lastRead: lastRead ?? this.lastRead,
       lastOffset: lastOffset ?? this.lastOffset,
       totalPages: totalPages ?? this.totalPages,
+      totalBytes: totalBytes ?? this.totalBytes,
       bookmarks: bookmarks ?? this.bookmarks,
       coverUrl: coverUrl,
     );
@@ -62,6 +66,7 @@ class Book {
         'lastRead': lastRead.toIso8601String(),
         'lastOffset': lastOffset,
         'totalPages': totalPages,
+        'totalBytes': totalBytes,
         'bookmarks': bookmarks,
         'coverUrl': coverUrl,
       };
@@ -74,6 +79,7 @@ class Book {
         lastRead: DateTime.parse(json['lastRead']),
         lastOffset: json['lastOffset'] ?? 0,
         totalPages: json['totalPages'] ?? 0,
+        totalBytes: json['totalBytes'] ?? 0,
         bookmarks: List<int>.from(json['bookmarks'] ?? []),
         coverUrl: json['coverUrl'],
       );

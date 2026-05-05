@@ -44,4 +44,9 @@ class ReaderSettingsNotifier extends StateNotifier<ReaderSettings> {
     state = state.copyWith(useTwoPageMode: enabled);
     await _storage.saveSettings(state);
   }
+
+  Future<void> updateHorizontalPadding(double padding) async {
+    state = state.copyWith(horizontalPadding: padding.clamp(0.0, 100.0));
+    await _storage.saveSettings(state);
+  }
 }
