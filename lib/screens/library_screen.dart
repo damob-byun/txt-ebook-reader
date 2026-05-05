@@ -130,9 +130,12 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
             icon: Icon(_isSearching ? Icons.close : Icons.search),
             onPressed: () {
               setState(() {
-                if (!_isSearching) {
+                if (_isSearching) {
+                  _isSearching = false;
                   _searchQuery = '';
                   _searchController.clear();
+                } else {
+                  _isSearching = true;
                 }
               });
             },
@@ -141,8 +144,17 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
             icon: const Icon(Icons.cloud_download_outlined),
             onPressed: () => _showCloudSelection(context),
           ),
+          IconButton(
+            icon: const Icon(Icons.settings),
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const SettingsScreen()),
+              );
+            },
+          ),
         ],
       ),
+      drawer: _buildDrawer(context, isDark),
       body: books.isEmpty 
           ? _buildEmptyState(context, isDark) 
           : ListView(
@@ -174,6 +186,53 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
                 const SizedBox(height: 50),
               ],
             ),
+    );
+  }
+
+  Widget _buildDrawer(BuildContext context, bool isDark) {
+    return Drawer(
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+      child: Column(
+        children: [
+          DrawerHeader(
+            decoration: BoxDecoration(color: isDark ? Colors.black26 : const Color(0xFF6B4E3D)),
+            child: const Center(
+              child: Text(
+                'MoonViewer',
+                style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold),
+              ),
+            ),
+          ),
+          ListTile(
+            leading: Icon(Icons.settings, color: isDark ? Colors.white70 : Colors.black87),
+            title: Text('전체 설정', style: TextStyle(color: isDark ? Colors.white : Colors.black87)),
+            onTap: () {
+              Navigator.pop(context);
+              Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const SettingsScreen()),
+              );
+            },
+          ),
+          ListTile(
+            leading: Icon(Icons.cloud_sync, color: isDark ? Colors.white70 : Colors.black87),
+            title: Text('WebDAV 계정 설정', style: TextStyle(color: isDark ? Colors.white : Colors.black87)),
+            onTap: () {
+              Navigator.pop(context);
+              Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const WebDavLoginScreen()),
+              );
+            },
+          ),
+          const Spacer(),
+          Padding(
+            padding: const EdgeInsets.all(20),
+            child: Text(
+              'v1.0.0',
+              style: TextStyle(color: isDark ? Colors.white24 : Colors.grey),
+            ),
+          ),
+        ],
+      ),
     );
   }
 

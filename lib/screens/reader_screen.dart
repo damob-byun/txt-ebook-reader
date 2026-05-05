@@ -992,12 +992,14 @@ class _BookmarkDrawer extends ConsumerWidget {
     final book = library[bookIdx];
     final bm = book.bookmarks;
 
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
     return Drawer(
-      backgroundColor: const Color(0xFFF5F5ED),
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       child: Column(
         children: [
           DrawerHeader(
-            decoration: const BoxDecoration(color: Color(0xFF6B4E3D)),
+            decoration: BoxDecoration(color: isDark ? Colors.black26 : const Color(0xFF6B4E3D)),
             child: Align(
               alignment: Alignment.bottomLeft,
               child: Column(
@@ -1030,7 +1032,7 @@ class _BookmarkDrawer extends ConsumerWidget {
                     const SizedBox(height: 12),
                     const Text(
                       '북마크가 없습니다.',
-                      style: TextStyle(color: Colors.brown),
+                      style: TextStyle(color: Colors.grey),
                     ),
                   ],
                 ),
@@ -1046,13 +1048,16 @@ class _BookmarkDrawer extends ConsumerWidget {
                   final offset = bm[i];
                   final pct = totalBytes > 0 ? (offset * 100 ~/ totalBytes) : 0;
                   return ListTile(
-                    leading: const Icon(
+                    leading: Icon(
                       Icons.bookmark,
-                      color: Color(0xFF6B4E3D),
+                      color: isDark ? Colors.amber[700] : const Color(0xFF6B4E3D),
                     ),
                     title: Text(
                       '$pct% 위치',
-                      style: const TextStyle(fontWeight: FontWeight.w500),
+                      style: TextStyle(
+                        fontWeight: FontWeight.w500,
+                        color: isDark ? Colors.white70 : Colors.black87,
+                      ),
                     ),
                     trailing: IconButton(
                       icon: const Icon(Icons.delete_outline, size: 18),
